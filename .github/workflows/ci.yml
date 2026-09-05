@@ -44,6 +44,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo ndk
         run: cargo install cargo-ndk
+      # ===== 新增：安装 bpf-linker =====
+      - name: Install bpf-linker
+        run: cargo install bpf-linker
+      # =================================
       - name: Setup WebUI Deps
         run: |
           npm install next@latest react@latest react-dom@latest
@@ -52,7 +56,8 @@ jobs:
       - name: Other deps
         run: |
           sudo apt update
-          sudo apt install gcc-multilib
+          # ===== 新增：clang, llvm, libbpf-dev =====
+          sudo apt install gcc-multilib clang llvm libbpf-dev
       - name: Build
         run: |
           export ANDROID_NDK_HOME=$(realpath ~/ndk_temp)
@@ -70,7 +75,7 @@ jobs:
           name: fas-rs(release)
           compression-level: 9
           path: output/artifact/release
-  
+
   debug-build:
     runs-on: ubuntu-latest
     steps:
@@ -91,6 +96,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo ndk
         run: cargo install cargo-ndk
+      # ===== 新增：安装 bpf-linker =====
+      - name: Install bpf-linker
+        run: cargo install bpf-linker
+      # =================================
       - name: Setup WebUI Deps
         run: |
           npm install next@latest react@latest react-dom@latest
@@ -99,12 +108,12 @@ jobs:
       - name: Other deps
         run: |
           sudo apt update
-          sudo apt install gcc-multilib
+          # ===== 新增：clang, llvm, libbpf-dev =====
+          sudo apt install gcc-multilib clang llvm libbpf-dev
       - name: Build
         run: |
           export ANDROID_NDK_HOME=$(realpath ~/ndk_temp)
           export ANDROID_NDK_ROOT=$ANDROID_NDK_HOME
-    
           cargo xtask build -v
       - name: Prepare artifacts
         run: |
@@ -116,5 +125,3 @@ jobs:
           name: fas-rs(debug)
           compression-level: 9
           path: output/artifact/debug
-  
-  
