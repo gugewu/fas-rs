@@ -44,10 +44,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo ndk
         run: cargo install cargo-ndk
-      # ===== 新增：安装 bpf-linker =====
+      # ===== 新增：使用预编译的 bpf-linker =====
       - name: Install bpf-linker
-        run: cargo install bpf-linker
-      # =================================
+        uses: taiki-e/install-action@v2
+        with:
+          tool: bpf-linker
+      # ========================================
       - name: Setup WebUI Deps
         run: |
           npm install next@latest react@latest react-dom@latest
@@ -56,7 +58,6 @@ jobs:
       - name: Other deps
         run: |
           sudo apt update
-          # ===== 新增：clang, llvm, libbpf-dev =====
           sudo apt install gcc-multilib clang llvm libbpf-dev
       - name: Build
         run: |
@@ -96,10 +97,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo ndk
         run: cargo install cargo-ndk
-      # ===== 新增：安装 bpf-linker =====
+      # ===== 新增：使用预编译的 bpf-linker =====
       - name: Install bpf-linker
-        run: cargo install bpf-linker
-      # =================================
+        uses: taiki-e/install-action@v2
+        with:
+          tool: bpf-linker
+      # ========================================
       - name: Setup WebUI Deps
         run: |
           npm install next@latest react@latest react-dom@latest
@@ -108,7 +111,6 @@ jobs:
       - name: Other deps
         run: |
           sudo apt update
-          # ===== 新增：clang, llvm, libbpf-dev =====
           sudo apt install gcc-multilib clang llvm libbpf-dev
       - name: Build
         run: |
