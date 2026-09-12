@@ -71,6 +71,8 @@ struct ControllerState {
     params: ControllerParams,
     target_fps_offset: f64,
     usage_sample_timer: Instant,
+    is_janked: bool,   // 新增：当前帧是否卡顿
+    max_freq: isize,   // 新增：全局最大频率，用于限制单次控制幅度
 }
 
 pub struct Looper {
@@ -116,6 +118,8 @@ impl Looper {
                 params: ControllerParams::default(),
                 target_fps_offset: 0.0,
                 usage_sample_timer: Instant::now(),
+                is_janked: false,     // 初始化
+                max_freq: 2918400,    // 根据实际设备调整
             },
         }
     }
@@ -133,6 +137,7 @@ impl Looper {
             if let Some(data) = self.recv_message() {
                 #[cfg(debug_assertions)]
                 debug!("original frametime: {:?}", data.frametime);
+
                 if let Some(state) = self.buffer_update(&data) {
                     match state {
                         BufferWorkingState::Usable => self.do_policy(),
@@ -160,7 +165,6 @@ impl Looper {
             if likely(self.fas_state.mode != new_mode) {
                 info!("Switch mode: {} -> {}", self.fas_state.mode, new_mode);
                 self.fas_state.mode = new_mode;
-
                 if self.fas_state.working_state == State::Working {
                     self.controller_state.controller.init_game(
                         self.fas_state.buffer.as_ref().unwrap().package_info.pid,
@@ -208,16 +212,42 @@ impl Looper {
             return;
         }
 
+        // 刷新各 policy 的 CPU 利用率
+        for cpu in &mut self.controller_state.controller.cpu_infos {
+            cpu.refresh_cpu_usage();
+        }
+
+        // 获取所有 policy 中的最大利用率
+        let max_cpu_util = self
+            .controller_state
+            .controller
+            .cpu_infos
+            .iter()
+            .map(|cpu| cpu.cpu_usage() as f64)
+            .fold(0.0f64, f64::max);
+
+        #[cfg(debug_assertions)]
+        debug!("max_cpu_util: {max_cpu_util:.4}");
+
+        // 设置 is_janked 标志
+        self.controller_state.is_janked = self
+            .fas_state
+            .buffer
+            .as_ref()
+            .map_or(false, |b| b.frametime_state.janked);
+
         let (control, is_janked) = if let Some(buffer) = &self.fas_state.buffer {
             let target_fps_offset = self
                 .therminal
                 .target_fps_offset(&mut self.config, self.fas_state.mode);
+
             calculate_control(
                 buffer,
                 &mut self.config,
                 self.fas_state.mode,
                 &mut self.controller_state,
                 target_fps_offset,
+                max_cpu_util,   // 传入
             )
             .unwrap_or_default()
         } else {
@@ -255,6 +285,7 @@ impl Looper {
             self.enable_fas();
         }
     }
+
 
     pub fn disable_fas(&mut self) {
         match self.fas_state.working_state {
@@ -324,4 +355,5 @@ impl Looper {
             Some(BufferWorkingState::Unusable)
         }
     }
+    
 }
