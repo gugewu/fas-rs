@@ -25,6 +25,7 @@ use std::{
 use anyhow::{Context, Result};
 use log::warn;
 use nix::sched::CpuSet;
+use sysinfo::{CpuRefreshKind, RefreshKind, System}; // 新增导入
 
 use super::IGNORE_MAP;
 use crate::file_handler::FileHandler;
@@ -38,10 +39,14 @@ pub struct Info {
     pub freqs: Vec<isize>,
     verify_freq: Option<isize>,
     verify_timer: Instant,
+    sys: System, // 新增字段
 }
 
 impl Info {
-    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
+    pub fn new<P>(path: P) -> Result<Self>
+    where
+        P: AsRef<Path>,
+    {
         let path = path.as_ref().to_path_buf();
         let file_name = path
             .file_name()
@@ -57,7 +62,7 @@ impl Info {
         let mut freqs: Vec<isize> = freqs_content
             .split_whitespace()
             .map(|f| f.parse::<isize>().context("Failed to parse frequency"))
-            .collect::<Result<_>>()?;
+            .collect::<Result<Vec<_>>>()?;
         freqs.sort_unstable();
 
         let affected_cpus = fs::read_to_string(path.join("affected_cpus"))
@@ -70,6 +75,11 @@ impl Info {
             })
             .collect();
 
+        // 初始化 sysinfo System
+        let sys = System::new_with_specifics(
+            RefreshKind::new().with_cpu(CpuRefreshKind::new().with_cpu_usage()),
+        );
+
         Ok(Self {
             policy,
             path,
@@ -78,7 +88,24 @@ impl Info {
             freqs,
             verify_freq: None,
             verify_timer: Instant::now(),
+            sys,
         })
+    }
+
+    /// 获取该 policy 下所有 CPU 核心的平均利用率
+    pub fn cpu_usage(&self) -> f32 {
+        let usages: Vec<f32> = self.sys.cpus().iter().map(|cpu| cpu.cpu_usage()).collect();
+
+        if usages.is_empty() {
+            return 0.0;
+        }
+
+        usages.iter().sum::<f32>() / usages.len() as f32
+    }
+
+    /// 刷新 CPU 利用率数据
+    pub fn refresh_cpu_usage(&mut self) {
+        self.sys.refresh_cpu_usage();
     }
 
     fn verify_freq(&mut self, write_freq: isize) {
@@ -100,6 +127,7 @@ impl Info {
                     .find(|freq| **freq >= verify_freq)
                     .copied()
                     .unwrap_or(verify_freq);
+
                 if !(min_acceptable_freq..=max_acceptable_freq).contains(&current_freq) {
                     warn!(
                         "CPU Policy{}: Frequency control does not meet expectations! Expected: {}-{}, Actual: {}",
@@ -135,7 +163,6 @@ impl Info {
     ) -> Result<()> {
         let min_freq = *self.freqs.first().context("No frequencies available")?;
         let max_freq = *self.freqs.last().context("No frequencies available")?;
-
         let adjusted_freq = freq.clamp(min_freq, max_freq);
         self.cur_fas_freq = adjusted_freq;
 
@@ -171,10 +198,11 @@ impl Info {
             .last()
             .context("No frequencies available")?
             .to_string();
-        self.verify_freq = None;
 
+        self.verify_freq = None;
         file_handler.write_with_workround(self.max_freq_path(), &max_freq)?;
         file_handler.write_with_workround(self.min_freq_path(), &min_freq)?;
+
         Ok(())
     }
 
