@@ -12,7 +12,7 @@ use toml::Value;
 use crate::framework::{
     error::Result,
     node::Mode,
-    scheduler::looper::policy::ControllerParams,
+    scheduler::ControllerParams,
 };
 
 pub use data::{ConfigData, MarginFps, ModeConfig, TemperatureThreshold};
