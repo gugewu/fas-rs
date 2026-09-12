@@ -39,7 +39,7 @@ pub struct Info {
     pub freqs: Vec<isize>,
     verify_freq: Option<isize>,
     verify_timer: Instant,
-    sys: System,   // 新增：用于获取 CPU 利用率
+    sys: System, // 用于获取 CPU 利用率
 }
 
 impl Info {
@@ -92,18 +92,33 @@ impl Info {
         })
     }
 
-    /// 获取该 policy 下所有 CPU 核心的平均利用率
-    pub fn cpu_usage(&self) -> f32 {
-        let usages: Vec<f32> = self.sys.cpus().iter().map(|cpu| cpu.cpu_usage()).collect();
-
-        if usages.is_empty() {
+    /// 该 policy 下所有核心的平均利用率，返回 0.0 ~ 1.0
+    ///
+    /// 注意：sysinfo 的 `cpu_usage()` 返回 0.0 ~ 100.0，
+    /// 这里除以 100 归一化，与 `util_decay_threshold`（0.0~1.0）量纲一致。
+    pub fn cpu_usage(&self) -> f64 {
+        let cpus = self.sys.cpus();
+        if cpus.is_empty() {
             return 0.0;
         }
 
-        usages.iter().sum::<f32>() / usages.len() as f32
+        let mut sum = 0.0f64;
+        let mut n = 0usize;
+        for &idx in &self.affected_cpus {
+            if let Some(cpu) = cpus.get(idx) {
+                sum += f64::from(cpu.cpu_usage());
+                n += 1;
+            }
+        }
+
+        if n == 0 {
+            0.0
+        } else {
+            sum / n as f64 / 100.0
+        }
     }
 
-    /// 刷新 CPU 利用率数据
+    /// 刷新 CPU 利用率数据（sysinfo 需要两次调用间隔 ≥200ms 才准确）
     pub fn refresh_cpu_usage(&mut self) {
         self.sys.refresh_cpu_usage();
     }
