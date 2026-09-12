@@ -34,9 +34,8 @@ pub fn calculate_control(
     mode: Mode,
     controller_state: &mut ControllerState,
     target_fps_offset_thermal: f64,
-    cpu_util: f64, // 新增：CPU利用率
+    cpu_util: f64,
 ) -> Option<(isize, bool)> {
-    // control, is_janked
     if unlikely(buffer.frametime_state.frametimes.len() < 60) {
         return None;
     }
@@ -113,7 +112,7 @@ fn calculate_control_inner(
     controller_state: &ControllerState,
     current_frametime: Duration,
     target_frametime: Duration,
-    cpu_util: f64, // 新增：CPU利用率
+    cpu_util: f64,
 ) -> isize {
     let error_p = (current_frametime.as_nanos() as f64 - target_frametime.as_nanos() as f64)
         * controller_state.params.kp;
