@@ -43,7 +43,7 @@ jobs:
           rustup update
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo ndk
-        # 固定 cargo-ndk 版本为 4.1.2，避免未来 breaking change
+        # 固定 cargo-ndk 版本为 4.1.2
         run: cargo install cargo-ndk --version 4.1.2
       # 使用预编译的 bpf-linker
       - name: Install bpf-linker
@@ -64,29 +64,38 @@ jobs:
           export ANDROID_NDK_HOME=$(realpath ~/ndk_temp)
           export ANDROID_NDK_ROOT=$ANDROID_NDK_HOME
 
-          # 交叉编译目标配置
           export TARGET_TRIPLE="aarch64-linux-android"
           export NDK_TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
           export NDK_API_LEVEL=31
+          export NDK_CROSS="$NDK_TOOLCHAIN/bin/${TARGET_TRIPLE}${NDK_API_LEVEL}-"
 
-          # 为 cc crate / luajit-src 显式指定交叉编译器
-          export CC_${TARGET_TRIPLE//-/_}="$NDK_TOOLCHAIN/bin/${TARGET_TRIPLE}${NDK_API_LEVEL}-clang"
+          # ===== 1. 为 cc crate 设置标准变量 =====
+          export CC_${TARGET_TRIPLE//-/_}="${NDK_CROSS}clang"
           export AR_${TARGET_TRIPLE//-/_}="$NDK_TOOLCHAIN/bin/llvm-ar"
-          export CXX_${TARGET_TRIPLE//-/_}="$NDK_TOOLCHAIN/bin/${TARGET_TRIPLE}${NDK_API_LEVEL}-clang++"
+          export CXX_${TARGET_TRIPLE//-/_}="${NDK_CROSS}clang++"
 
-          # 引导 LuaJIT 构建系统使用 NDK 工具链
-          export LUAJIT_CROSS="${TARGET_TRIPLE}${NDK_API_LEVEL}-"
+          # ===== 2. 关键：为 LuaJIT 的 Makefile 设置交叉编译变量 =====
+          # LuaJIT 的构建系统不读取 CC_aarch64_linux_android，而是使用以下变量
+          export CROSS="$NDK_CROSS"
+          export STATIC_CC="${NDK_CROSS}clang"
+          export DYNAMIC_CC="${NDK_CROSS}clang -fPIC"
+          export TARGET_CC="$STATIC_CC"
+          export TARGET_SYS=Linux
+          export TARGET_FLAGS="-march=armv8-a"
+          export TARGET=arm64
           export LUAJIT_STATIC=1
 
-          # 为 binder_ndk_sys / bindgen 设置目标三元组（注意下划线格式）
+          # ===== 3. 为 bindgen 设置目标三元组（注意下划线格式） =====
           export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--target=${TARGET_TRIPLE}${NDK_API_LEVEL} --sysroot=$NDK_TOOLCHAIN/sysroot"
 
           echo "===== Environment Check ====="
           echo "CC_aarch64_linux_android = $CC_aarch64_linux_android"
-          echo "AR_aarch64_linux_android = $AR_aarch64_linux_android"
-          echo "LUAJIT_CROSS = $LUAJIT_CROSS"
-          echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android = $BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android"
-          ls -la $CC_aarch64_linux_android
+          echo "CROSS = $CROSS"
+          echo "STATIC_CC = $STATIC_CC"
+          echo "TARGET_CC = $TARGET_CC"
+          echo "LUAJIT_STATIC = $LUAJIT_STATIC"
+          echo "BINDGEN_EXTRA_CLANG_ARGS = $BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android"
+          ls -la $CROSS"clang"
           echo "============================="
 
           cargo xtask build -r -v
@@ -143,22 +152,31 @@ jobs:
           export TARGET_TRIPLE="aarch64-linux-android"
           export NDK_TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
           export NDK_API_LEVEL=31
+          export NDK_CROSS="$NDK_TOOLCHAIN/bin/${TARGET_TRIPLE}${NDK_API_LEVEL}-"
 
-          export CC_${TARGET_TRIPLE//-/_}="$NDK_TOOLCHAIN/bin/${TARGET_TRIPLE}${NDK_API_LEVEL}-clang"
+          export CC_${TARGET_TRIPLE//-/_}="${NDK_CROSS}clang"
           export AR_${TARGET_TRIPLE//-/_}="$NDK_TOOLCHAIN/bin/llvm-ar"
-          export CXX_${TARGET_TRIPLE//-/_}="$NDK_TOOLCHAIN/bin/${TARGET_TRIPLE}${NDK_API_LEVEL}-clang++"
+          export CXX_${TARGET_TRIPLE//-/_}="${NDK_CROSS}clang++"
 
-          export LUAJIT_CROSS="${TARGET_TRIPLE}${NDK_API_LEVEL}-"
+          export CROSS="$NDK_CROSS"
+          export STATIC_CC="${NDK_CROSS}clang"
+          export DYNAMIC_CC="${NDK_CROSS}clang -fPIC"
+          export TARGET_CC="$STATIC_CC"
+          export TARGET_SYS=Linux
+          export TARGET_FLAGS="-march=armv8-a"
+          export TARGET=arm64
           export LUAJIT_STATIC=1
 
           export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--target=${TARGET_TRIPLE}${NDK_API_LEVEL} --sysroot=$NDK_TOOLCHAIN/sysroot"
 
           echo "===== Environment Check ====="
           echo "CC_aarch64_linux_android = $CC_aarch64_linux_android"
-          echo "AR_aarch64_linux_android = $AR_aarch64_linux_android"
-          echo "LUAJIT_CROSS = $LUAJIT_CROSS"
-          echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android = $BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android"
-          ls -la $CC_aarch64_linux_android
+          echo "CROSS = $CROSS"
+          echo "STATIC_CC = $STATIC_CC"
+          echo "TARGET_CC = $TARGET_CC"
+          echo "LUAJIT_STATIC = $LUAJIT_STATIC"
+          echo "BINDGEN_EXTRA_CLANG_ARGS = $BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android"
+          ls -la $CROSS"clang"
           echo "============================="
 
           cargo xtask build -v
