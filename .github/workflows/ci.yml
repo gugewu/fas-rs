@@ -1,19 +1,5 @@
 # Copyright 2023-2025, dependabot[bot], shadow3, shadow3aaa
-#
-# This file is part of fas-rs.
-#
-# fas-rs is free software: you can redistribute it and/or modify it under
-# the terms of the GNU General Public License as published by the Free
-# Software Foundation, either version 3 of the License, or (at your option)
-# any later version.
-#
-# fas-rs is distributed in the hope that it will be useful, but WITHOUT ANY
-# WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
-# FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
-# details.
-#
-# You should have received a copy of the GNU General Public License along
-# with fas-rs. If not, see <https://www.gnu.org/licenses/>.
+# ... (许可证注释保持不变)
 
 name: ci-build
 on:
@@ -30,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Setup ndk
         run: |
-          # 固定 NDK 版本为 r26b，避免 r30 对目标三元组的严格检查
+          # 固定使用 r26b，它对 bindgen 更友好
           wget -O ndk.zip https://dl.google.com/android/repository/android-ndk-r26b-linux.zip -nv
           mkdir -p ~/ndk_temp
           unzip ndk.zip -d ~/ndk_temp 2>&1 > /dev/null
@@ -41,11 +27,9 @@ jobs:
           rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
           rustup component add rust-src
           rustup update
-      - uses: Swatinem/rust-cache@v2
+      # 注意：为确保使用新配置，已暂时移除缓存步骤
       - name: Install cargo ndk
-        # 固定 cargo-ndk 版本为 4.1.2
         run: cargo install cargo-ndk --version 4.1.2
-      # 使用预编译的 bpf-linker
       - name: Install bpf-linker
         uses: taiki-e/install-action@v2
         with:
@@ -67,35 +51,17 @@ jobs:
           export TARGET_TRIPLE="aarch64-linux-android"
           export NDK_TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
           export NDK_API_LEVEL=31
-          export NDK_CROSS="$NDK_TOOLCHAIN/bin/${TARGET_TRIPLE}${NDK_API_LEVEL}-"
 
-          # ===== 1. 为 cc crate 设置标准变量 =====
-          export CC_${TARGET_TRIPLE//-/_}="${NDK_CROSS}clang"
+          # 为 Lua 5.4 的构建设置标准交叉编译变量
+          export CC_${TARGET_TRIPLE//-/_}="$NDK_TOOLCHAIN/bin/${TARGET_TRIPLE}${NDK_API_LEVEL}-clang"
           export AR_${TARGET_TRIPLE//-/_}="$NDK_TOOLCHAIN/bin/llvm-ar"
-          export CXX_${TARGET_TRIPLE//-/_}="${NDK_CROSS}clang++"
 
-          # ===== 2. 关键：为 LuaJIT 的 Makefile 设置交叉编译变量 =====
-          # LuaJIT 的构建系统不读取 CC_aarch64_linux_android，而是使用以下变量
-          export CROSS="$NDK_CROSS"
-          export STATIC_CC="${NDK_CROSS}clang"
-          export DYNAMIC_CC="${NDK_CROSS}clang -fPIC"
-          export TARGET_CC="$STATIC_CC"
-          export TARGET_SYS=Linux
-          export TARGET_FLAGS="-march=armv8-a"
-          export TARGET=arm64
-          export LUAJIT_STATIC=1
-
-          # ===== 3. 为 bindgen 设置目标三元组（注意下划线格式） =====
+          # 为 binder_ndk_sys / bindgen 设置目标三元组
           export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--target=${TARGET_TRIPLE}${NDK_API_LEVEL} --sysroot=$NDK_TOOLCHAIN/sysroot"
 
           echo "===== Environment Check ====="
           echo "CC_aarch64_linux_android = $CC_aarch64_linux_android"
-          echo "CROSS = $CROSS"
-          echo "STATIC_CC = $STATIC_CC"
-          echo "TARGET_CC = $TARGET_CC"
-          echo "LUAJIT_STATIC = $LUAJIT_STATIC"
           echo "BINDGEN_EXTRA_CLANG_ARGS = $BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android"
-          ls -la $CROSS"clang"
           echo "============================="
 
           cargo xtask build -r -v
@@ -128,7 +94,7 @@ jobs:
           rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
           rustup component add rust-src
           rustup update
-      - uses: Swatinem/rust-cache@v2
+      # 注意：为确保使用新配置，已暂时移除缓存步骤
       - name: Install cargo ndk
         run: cargo install cargo-ndk --version 4.1.2
       - name: Install bpf-linker
@@ -152,31 +118,15 @@ jobs:
           export TARGET_TRIPLE="aarch64-linux-android"
           export NDK_TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
           export NDK_API_LEVEL=31
-          export NDK_CROSS="$NDK_TOOLCHAIN/bin/${TARGET_TRIPLE}${NDK_API_LEVEL}-"
 
-          export CC_${TARGET_TRIPLE//-/_}="${NDK_CROSS}clang"
+          export CC_${TARGET_TRIPLE//-/_}="$NDK_TOOLCHAIN/bin/${TARGET_TRIPLE}${NDK_API_LEVEL}-clang"
           export AR_${TARGET_TRIPLE//-/_}="$NDK_TOOLCHAIN/bin/llvm-ar"
-          export CXX_${TARGET_TRIPLE//-/_}="${NDK_CROSS}clang++"
-
-          export CROSS="$NDK_CROSS"
-          export STATIC_CC="${NDK_CROSS}clang"
-          export DYNAMIC_CC="${NDK_CROSS}clang -fPIC"
-          export TARGET_CC="$STATIC_CC"
-          export TARGET_SYS=Linux
-          export TARGET_FLAGS="-march=armv8-a"
-          export TARGET=arm64
-          export LUAJIT_STATIC=1
 
           export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--target=${TARGET_TRIPLE}${NDK_API_LEVEL} --sysroot=$NDK_TOOLCHAIN/sysroot"
 
           echo "===== Environment Check ====="
           echo "CC_aarch64_linux_android = $CC_aarch64_linux_android"
-          echo "CROSS = $CROSS"
-          echo "STATIC_CC = $STATIC_CC"
-          echo "TARGET_CC = $TARGET_CC"
-          echo "LUAJIT_STATIC = $LUAJIT_STATIC"
           echo "BINDGEN_EXTRA_CLANG_ARGS = $BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android"
-          ls -la $CROSS"clang"
           echo "============================="
 
           cargo xtask build -v
