@@ -44,7 +44,7 @@ pub enum TargetFps {
 #[derive(Debug)]
 pub struct Config {
     inner: Inner,
-    pub controller_params: ControllerParams,
+    pub controller_params: ControllerParams,   // 新增
 }
 
 impl Config {
@@ -57,8 +57,9 @@ impl Config {
         let toml_raw = fs::read_to_string(path)?;
         let toml: ConfigData = toml::from_str(&toml_raw)?;
         let (sx, rx) = mpsc::channel();
-        let inner = Inner::new(toml, rx);
+        let inner = Inner::new(toml.clone(), rx);
 
+        // 从配置中读取 controller_params，若未配置则使用默认值
         let controller_params = toml
             .controller_params
             .clone()
@@ -86,7 +87,8 @@ impl Config {
         S: AsRef<str>,
     {
         let pkg = pkg.as_ref();
-        self.inner.config().game_list.contains_key(pkg) || self.inner.config().scene_game_list.contains(pkg)
+        self.inner.config().game_list.contains_key(pkg)
+            || self.inner.config().scene_game_list.contains(pkg)
     }
 
     pub fn target_fps<S>(&mut self, pkg: S) -> Option<TargetFps>
@@ -144,6 +146,9 @@ impl Config {
 
     pub fn target_core_temperature(&mut self, mode: Mode) -> isize {
         let config = self.mode_config(mode);
-        config.target_core_temperature
+        match config.core_temp_thresh {
+            TemperatureThreshold::Disabled => 0,
+            TemperatureThreshold::Temp(t) => t as isize,
+        }
     }
 }
