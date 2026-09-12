@@ -39,7 +39,7 @@ pub struct Info {
     pub freqs: Vec<isize>,
     verify_freq: Option<isize>,
     verify_timer: Instant,
-    sys: System,
+    sys: System,   // 新增：用于获取 CPU 利用率
 }
 
 impl Info {
