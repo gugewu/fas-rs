@@ -100,7 +100,7 @@ impl WindowsInfo {
     }
 
     // Android 17+ 回退方案: 通过 ActivityRecord ID 解析
-    fn parse_by_activity_record(dump: &str, package_name: &str) -> Option<i32> {
+    fn parse_by_activity_record(dump: &str, _package_name: &str) -> Option<i32> {
         let focused_line = dump
             .lines()
             .find(|line| line.trim().starts_with("mFocusedApp="))?;
