@@ -1,20 +1,3 @@
-// Copyright 2024-2025, shadow3aaa
-//
-// This file is part of fas-rs.
-//
-// fas-rs is free software: you can redistribute it and/or modify it under
-// the terms of the GNU General Public License as published by the Free
-// Software Foundation, either version 3 of the License, or (at your option)
-// any later version.
-//
-// fas-rs is distributed in the hope that it will be useful, but WITHOUT ANY
-// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
-// FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
-// details.
-//
-// You should have received a copy of the GNU General Public License along
-// with fas-rs. If not, see <https://www.gnu.org/licenses/>.
-
 use std::time::{Duration, Instant};
 
 use likely_stable::unlikely;
@@ -34,7 +17,7 @@ pub fn calculate_control(
     mode: Mode,
     controller_state: &mut ControllerState,
     target_fps_offset_thermal: f64,
-    cpu_util: f64,
+    cpu_util: f64, // 新增参数
 ) -> Option<(isize, bool)> {
     if unlikely(buffer.frametime_state.frametimes.len() < 60) {
         return None;
@@ -68,7 +51,7 @@ pub fn calculate_control(
             controller_state,
             adjusted_last_frame,
             target_frametime,
-            cpu_util,
+            cpu_util, // 传入
         ),
         buffer.frametime_state.current_fps_long < target_fps - 2.0,
     ))
@@ -112,7 +95,7 @@ fn calculate_control_inner(
     controller_state: &ControllerState,
     current_frametime: Duration,
     target_frametime: Duration,
-    cpu_util: f64,
+    cpu_util: f64, // 新增参数
 ) -> isize {
     let error_p = (current_frametime.as_nanos() as f64 - target_frametime.as_nanos() as f64)
         * controller_state.params.kp;
@@ -137,7 +120,7 @@ fn calculate_control_inner(
         control *= util_factor;
     }
 
-    // 限制单次控制量幅度
+    // 限制单次控制量幅度，防止频率剧烈跳变
     let max_step = controller_state.max_freq as f64 * controller_state.params.max_step_ratio;
     control = control.clamp(-max_step, max_step);
 
