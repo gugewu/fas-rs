@@ -29,7 +29,7 @@ use toml::Value;
 use crate::framework::{
     error::Result,
     node::Mode,
-    scheduler::looper::policy::ControllerParams, // 新增导入
+    scheduler::looper::policy::ControllerParams,
 };
 
 pub use data::{ConfigData, MarginFps, ModeConfig, TemperatureThreshold};
@@ -44,7 +44,7 @@ pub enum TargetFps {
 #[derive(Debug)]
 pub struct Config {
     inner: Inner,
-    pub controller_params: ControllerParams, // 新增字段
+    pub controller_params: ControllerParams,
 }
 
 impl Config {
@@ -59,7 +59,6 @@ impl Config {
         let (sx, rx) = mpsc::channel();
         let inner = Inner::new(toml, rx);
 
-        // 从配置中读取 controller_params，若未配置则使用默认值
         let controller_params = toml
             .controller_params
             .clone()
