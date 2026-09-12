@@ -22,7 +22,11 @@ use likely_stable::unlikely;
 use log::debug;
 
 use super::super::buffer::Buffer;
-use crate::framework::{config::MarginFps, prelude::*, scheduler::looper::ControllerState};
+use crate::framework::{
+    config::MarginFps,
+    prelude::*,
+    scheduler::looper::ControllerState,
+};
 
 pub fn calculate_control(
     buffer: &Buffer,
@@ -30,8 +34,9 @@ pub fn calculate_control(
     mode: Mode,
     controller_state: &mut ControllerState,
     target_fps_offset_thermal: f64,
-) -> Option<(isize, bool)> // control, is_janked
-{
+    cpu_util: f64, // 新增：CPU利用率
+) -> Option<(isize, bool)> {
+    // control, is_janked
     if unlikely(buffer.frametime_state.frametimes.len() < 60) {
         return None;
     }
@@ -44,7 +49,6 @@ pub fn calculate_control(
             .copied()
             .map_or_else(|| target_fps / 60.0 * f64::from(*base), f64::from),
     };
-
     assert!(margin_fps.is_sign_positive(), "margin_fps must be positive");
 
     let target_fps = (target_fps + target_fps_offset_thermal).clamp(0.0, target_fps);
@@ -57,10 +61,16 @@ pub fn calculate_control(
         debug!("adjusted_target_fps: {adjusted_target_fps}");
         debug!("adjusted_last_frame: {adjusted_last_frame:?}");
         debug!("target_frametime: {target_frametime:?}");
+        debug!("cpu_util: {cpu_util:.4}");
     }
 
     Some((
-        calculate_control_inner(controller_state, adjusted_last_frame, target_frametime),
+        calculate_control_inner(
+            controller_state,
+            adjusted_last_frame,
+            target_frametime,
+            cpu_util,
+        ),
         buffer.frametime_state.current_fps_long < target_fps - 2.0,
     ))
 }
@@ -103,6 +113,7 @@ fn calculate_control_inner(
     controller_state: &ControllerState,
     current_frametime: Duration,
     target_frametime: Duration,
+    cpu_util: f64, // 新增：CPU利用率
 ) -> isize {
     let error_p = (current_frametime.as_nanos() as f64 - target_frametime.as_nanos() as f64)
         * controller_state.params.kp;
@@ -110,5 +121,26 @@ fn calculate_control_inner(
     #[cfg(debug_assertions)]
     debug!("error_p {error_p}");
 
-    error_p as isize
+    let mut control = error_p;
+
+    // 仅对正向控制（升频）进行利用率衰减
+    if control > 0.0 {
+        let threshold = controller_state.params.util_decay_threshold;
+        let mut util_factor = (cpu_util / threshold).clamp(0.0, 1.0);
+
+        // 安全下限：帧时间严重超标（>2倍目标）且非卡顿时，保留至少0.5的升频系数
+        let severe_miss =
+            current_frametime.as_nanos() as f64 > target_frametime.as_nanos() as f64 * 2.0;
+        if severe_miss && !controller_state.is_janked {
+            util_factor = util_factor.max(0.5);
+        }
+
+        control *= util_factor;
+    }
+
+    // 限制单次控制量幅度
+    let max_step = controller_state.max_freq as f64 * controller_state.params.max_step_ratio;
+    control = control.clamp(-max_step, max_step);
+
+    control as isize
 }
