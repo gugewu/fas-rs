@@ -70,6 +70,7 @@ impl Controller {
                 .map(|cpu| (cpu.policy, Mutex::new(ExtraPolicy::None)))
                 .collect()
         });
+
         IGNORE_MAP.get_or_init(|| {
             cpu_infos
                 .iter()
@@ -98,7 +99,6 @@ impl Controller {
 
     fn load_cpu_infos() -> Result<Vec<Info>> {
         let mut cpu_infos = Vec::new();
-
         for entry in fs::read_dir("/sys/devices/system/cpu/cpufreq")? {
             let path = match entry {
                 Ok(entry) => entry.path(),
@@ -107,22 +107,17 @@ impl Controller {
                     continue;
                 }
             };
-
             if !path.is_dir() {
                 continue;
             }
-
             let Some(filename) = path.file_name().and_then(|s| s.to_str()) else {
                 continue;
             };
-
             if !filename.starts_with("policy") {
                 continue;
             }
-
             cpu_infos.push(Self::retry_load_info(&path));
         }
-
         Ok(cpu_infos)
     }
 
@@ -164,6 +159,7 @@ impl Controller {
         let sorted_policies = self.sort_policies_topologically();
         let fas_freqs = Self::apply_absolute_constraints(fas_freqs, &sorted_policies);
         let fas_freqs = Self::apply_relative_constraints(fas_freqs, &sorted_policies);
+
         let top_used_cores = self.top_used_cores().unwrap_or_else(|| {
             let mut all_cores = CpuSet::new();
             for core in 0..num_cpus::get() {
@@ -209,6 +205,7 @@ impl Controller {
             .map(|cpu| cpu.cur_fas_freq)
             .max()
             .unwrap_or_default();
+
         let cur_freq_max = self
             .cpu_infos
             .iter()
@@ -232,8 +229,10 @@ impl Controller {
                             .saturating_add(control)
                             .clamp(0, self.max_freq)
                     } else {
-                        let util_tracking_sugg_freq =
-                            (cur_freq_max as f64 * self.util_max.unwrap() / 0.5) as isize; // min_util: 50%
+                        let util_tracking_sugg_freq = (cur_freq_max as f64
+                            * self.util_max.unwrap()
+                            / 0.5) as isize; // min_util: 50%
+
                         #[cfg(debug_assertions)]
                         debug!(
                             "util: {}, cur_freq_max: {}, util_tracking_sugg_freq: {}",
@@ -241,6 +240,7 @@ impl Controller {
                             cur_freq_max,
                             util_tracking_sugg_freq
                         );
+
                         cur_fas_freq_max
                             .saturating_add(control)
                             .min(util_tracking_sugg_freq)
@@ -252,12 +252,11 @@ impl Controller {
     }
 
     fn sort_policies_topologically(&self) -> Vec<i32> {
-        let mut graph: HashMap<_, Vec<_>> = HashMap::new();
-        let mut indegree: HashMap<_, _> = HashMap::new();
+        let mut graph: HashMap<i32, Vec<i32>> = HashMap::new();
+        let mut indegree: HashMap<i32, i32> = HashMap::new();
 
         for cpu in &self.cpu_infos {
             let policy = cpu.policy;
-
             if let ExtraPolicy::RelRangeBound(ref rel_bound) = *EXTRA_POLICY_MAP
                 .get()
                 .context("EXTRA_POLICY_MAP not initialized")
@@ -270,17 +269,16 @@ impl Controller {
                 graph.entry(rel_bound.rel_to).or_default().push(policy);
                 *indegree.entry(policy).or_insert(0) += 1;
             }
-
             indegree.entry(policy).or_insert(0);
         }
 
-        let mut queue: Vec<_> = indegree
+        let mut queue: Vec<i32> = indegree
             .iter()
             .filter(|&(_, &deg)| deg == 0)
             .map(|(&policy, _)| policy)
             .collect();
-        let mut sorted_policies = Vec::new();
 
+        let mut sorted_policies = Vec::new();
         while let Some(policy) = queue.pop() {
             sorted_policies.push(policy);
             if let Some(dependents) = graph.get(&policy) {
@@ -304,7 +302,7 @@ impl Controller {
     }
 
     fn top_used_cores(&self) -> Option<CpuSet> {
-        let top_threads_cpu_sets: Vec<_> = self
+        let top_threads_cpu_sets: Vec<CpuSet> = self
             .process_monitor
             .top_threads()
             .filter_map(|tid| sched_getaffinity(Pid::from_raw(tid)).ok())
@@ -324,7 +322,6 @@ impl Controller {
                     }
                 }
             }
-
             return Some(top_used_cores);
         }
 
@@ -341,7 +338,6 @@ impl Controller {
                 }
             }
         }
-
         Some(top_used_cores)
     }
 
@@ -368,7 +364,6 @@ impl Controller {
                 }
             }
         }
-
         fas_freqs
     }
 
@@ -389,10 +384,8 @@ impl Controller {
                 {
                     ExtraPolicy::RelRangeBound(ref rel_bound) => {
                         let rel_to_freq = fas_freqs.get(&rel_bound.rel_to).copied().unwrap_or(0);
-
                         #[cfg(debug_assertions)]
                         debug!("policy{policy} rel_to {rel_to_freq}");
-
                         freq.clamp(
                             rel_to_freq + rel_bound.min.unwrap_or(isize::MIN),
                             rel_to_freq + rel_bound.max.unwrap_or(isize::MAX),
@@ -400,14 +393,11 @@ impl Controller {
                     }
                     _ => freq,
                 };
-
                 #[cfg(debug_assertions)]
                 debug!("policy{policy} freq after relative bound: {adjusted_freq}");
-
                 fas_freqs.insert(*policy, adjusted_freq);
             }
         }
-
         fas_freqs
     }
 
@@ -419,6 +409,21 @@ impl Controller {
 
     pub fn util_max(&self) -> f64 {
         self.util_max.unwrap_or_default()
+    }
+
+    // ===== 新增：供 looper 访问 CPU policy 信息的访问器 =====
+
+    /// 只读访问各 CPU policy 的信息
+    #[inline]
+    #[must_use]
+    pub fn cpu_infos(&self) -> &[Info] {
+        &self.cpu_infos
+    }
+
+    /// 可变访问各 CPU policy 的信息（用于刷新利用率）
+    #[inline]
+    pub fn cpu_infos_mut(&mut self) -> &mut [Info] {
+        &mut self.cpu_infos
     }
 }
 
