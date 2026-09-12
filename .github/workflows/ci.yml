@@ -23,50 +23,63 @@ on:
     branches: ["master"]
 env:
   CARGO_TERM_COLOR: always
+
 jobs:
   release-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Setup ndk
-        uses: nttld/setup-ndk@v1
-        id: setup-ndk
-        with:
-          ndk-version: r25c
-          add-to-path: false
-          local-cache: false
+
+      - name: Setup Android NDK r26d
+        run: |
+          cd "$RUNNER_TEMP"
+          wget -q https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
+          unzip -q android-ndk-r26d-linux.zip
+          NDK_PATH="$RUNNER_TEMP/android-ndk-r26d"
+          echo "ANDROID_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$NDK_PATH" >> $GITHUB_ENV
+          echo "NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+          echo "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+          "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version
+
       - name: Setup rust toolchains
         run: |
           rustup default nightly
           rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
           rustup component add rust-src
+
       - uses: Swatinem/rust-cache@v2
+
       - name: Install cargo ndk
         run: cargo install cargo-ndk
-      # ===== 新增：使用预编译的 bpf-linker =====
+
       - name: Install bpf-linker
         uses: taiki-e/install-action@v2
         with:
           tool: bpf-linker
-      # ========================================
+
       - name: Setup WebUI Deps
         run: |
           npm install next@latest react@latest react-dom@latest
           cd webui
           npm install
+
       - name: Other deps
         run: |
           sudo apt update
           sudo apt install gcc-multilib clang llvm libbpf-dev
+
       - name: Build
         run: |
-          export ANDROID_NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}
-          export ANDROID_NDK_ROOT=$ANDROID_NDK_HOME
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          ls "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" | head -5
           cargo xtask build -r -v
+
       - name: Prepare artifacts
         run: |
           mkdir -p output/artifact/release
           unzip "output/fas-rs(release).zip" -d output/artifact/release
+
       - name: Upload release version
         uses: actions/upload-artifact@v4
         with:
@@ -78,45 +91,57 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Setup ndk
-        uses: nttld/setup-ndk@v1
-        id: setup-ndk
-        with:
-          ndk-version: r25c
-          add-to-path: false
-          local-cache: true
+
+      - name: Setup Android NDK r26d
+        run: |
+          cd "$RUNNER_TEMP"
+          wget -q https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
+          unzip -q android-ndk-r26d-linux.zip
+          NDK_PATH="$RUNNER_TEMP/android-ndk-r26d"
+          echo "ANDROID_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$NDK_PATH" >> $GITHUB_ENV
+          echo "NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+          echo "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+          "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version
+
       - name: Setup rust toolchains
         run: |
           rustup default nightly
           rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
           rustup component add rust-src
+
       - uses: Swatinem/rust-cache@v2
+
       - name: Install cargo ndk
         run: cargo install cargo-ndk
-      # ===== 新增：使用预编译的 bpf-linker =====
+
       - name: Install bpf-linker
         uses: taiki-e/install-action@v2
         with:
           tool: bpf-linker
-      # ========================================
+
       - name: Setup WebUI Deps
         run: |
           npm install next@latest react@latest react-dom@latest
           cd webui
           npm install
+
       - name: Other deps
         run: |
           sudo apt update
           sudo apt install gcc-multilib clang llvm libbpf-dev
+
       - name: Build
         run: |
-          export ANDROID_NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}
-          export ANDROID_NDK_ROOT=$ANDROID_NDK_HOME
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          ls "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" | head -5
           cargo xtask build -v
+
       - name: Prepare artifacts
         run: |
           mkdir -p output/artifact/debug
           unzip "output/fas-rs(debug).zip" -d output/artifact/debug
+
       - name: Upload debug version
         uses: actions/upload-artifact@v4
         with:
