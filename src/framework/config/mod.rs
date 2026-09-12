@@ -26,7 +26,12 @@ use inner::Inner;
 use log::{error, info};
 use toml::Value;
 
-use crate::framework::{error::Result, node::Mode};
+use crate::framework::{
+    error::Result,
+    node::Mode,
+    scheduler::looper::policy::ControllerParams, // 新增导入
+};
+
 pub use data::{ConfigData, MarginFps, ModeConfig, TemperatureThreshold};
 use read::wait_and_read;
 
@@ -39,6 +44,7 @@ pub enum TargetFps {
 #[derive(Debug)]
 pub struct Config {
     inner: Inner,
+    pub controller_params: ControllerParams, // 新增字段
 }
 
 impl Config {
@@ -50,25 +56,30 @@ impl Config {
         let std_path = sp.as_ref();
         let toml_raw = fs::read_to_string(path)?;
         let toml: ConfigData = toml::from_str(&toml_raw)?;
-
         let (sx, rx) = mpsc::channel();
         let inner = Inner::new(toml, rx);
+
+        // 从配置中读取 controller_params，若未配置则使用默认值
+        let controller_params = toml
+            .controller_params
+            .clone()
+            .unwrap_or_default();
 
         {
             let path = path.to_owned();
             let std_path = std_path.to_owned();
-
             thread::Builder::new()
                 .name("ConfigThread".into())
                 .spawn(move || {
-                    wait_and_read(&path, &std_path, &sx).unwrap_or_else(|e| error!("{e:#?}"));
+                    wait_and_read(&path, &std_path, &sx).unwrap_or_else(|e| {
+                        error!("{e:#?}");
+                    });
                     panic!("An unrecoverable error occurred!");
                 })?;
         }
 
         info!("Config watcher started");
-
-        Ok(Self { inner })
+        Ok(Self { inner, controller_params })
     }
 
     pub fn need_fas<S>(&mut self, pkg: S) -> bool
@@ -76,9 +87,7 @@ impl Config {
         S: AsRef<str>,
     {
         let pkg = pkg.as_ref();
-
-        self.inner.config().game_list.contains_key(pkg)
-            || self.inner.config().scene_game_list.contains(pkg)
+        self.inner.config().game_list.contains_key(pkg) || self.inner.config().scene_game_list.contains(pkg)
     }
 
     pub fn target_fps<S>(&mut self, pkg: S) -> Option<TargetFps>
@@ -87,7 +96,6 @@ impl Config {
     {
         let pkg = pkg.as_ref();
         let pkg = pkg.split(':').next()?;
-
         self.inner.config().game_list.get(pkg).cloned().map_or_else(
             || {
                 if self.inner.config().scene_game_list.contains(pkg) {
@@ -125,13 +133,18 @@ impl Config {
         )
     }
 
-    #[must_use]
-    pub fn mode_config(&mut self, m: Mode) -> &ModeConfig {
-        match m {
-            Mode::Powersave => &self.inner.config().powersave,
-            Mode::Balance => &self.inner.config().balance,
-            Mode::Performance => &self.inner.config().performance,
-            Mode::Fast => &self.inner.config().fast,
+    pub fn mode_config(&mut self, mode: Mode) -> &ModeConfig {
+        let config = self.inner.config();
+        match mode {
+            Mode::Powersave => &config.powersave,
+            Mode::Balance => &config.balance,
+            Mode::Performance => &config.performance,
+            Mode::Fast => &config.fast,
         }
+    }
+
+    pub fn target_core_temperature(&mut self, mode: Mode) -> isize {
+        let config = self.mode_config(mode);
+        config.target_core_temperature
     }
 }
