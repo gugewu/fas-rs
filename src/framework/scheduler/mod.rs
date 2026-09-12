@@ -32,6 +32,9 @@ use crate::Controller;
 use frame_analyzer::Analyzer;
 use looper::Looper;
 
+// 新增：对外暴露 ControllerParams，供 config 模块使用
+pub use looper::ControllerParams;
+
 #[derive(Debug, Clone, Copy)]
 pub struct FasData {
     pub pid: i32,
