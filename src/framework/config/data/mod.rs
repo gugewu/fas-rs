@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use toml::Table;
 
-use super::super::scheduler::looper::policy::ControllerParams;
+use super::super::scheduler::ControllerParams;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ConfigData {
