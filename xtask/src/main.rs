@@ -274,7 +274,7 @@ fn bin_path(release: bool) -> PathBuf {
 fn cargo_ndk() -> Command {
     let mut command = Command::new("cargo");
     command
-        .args(["+nightly", "ndk", "--platform", "31", "-t", "arm64-v8a"])
+        .args(["+nightly", "ndk", "--platform", "31", "-t", "arm64-v8a", "--bindgen"])
         .env("RUSTFLAGS", "-C default-linker-libraries");
     command
 }
