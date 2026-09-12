@@ -68,7 +68,7 @@ struct AnalyzerState {
     restart_timer: Instant,
 }
 
-struct ControllerState {
+pub(crate) struct ControllerState {
     controller: Controller,
     params: ControllerParams,
     target_fps_offset: f64,
