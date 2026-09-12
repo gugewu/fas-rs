@@ -26,7 +26,9 @@ use likely_stable::{likely, unlikely};
 #[cfg(debug_assertions)]
 use log::debug;
 use log::info;
-use policy::{ControllerParams, controll::calculate_control};
+
+pub use policy::ControllerParams;
+use policy::controll::calculate_control;
 
 use super::{FasData, thermal::Thermal, topapp::TopAppsWatcher};
 use crate::{
@@ -71,8 +73,8 @@ struct ControllerState {
     params: ControllerParams,
     target_fps_offset: f64,
     usage_sample_timer: Instant,
-    is_janked: bool,   // 新增：当前帧是否卡顿
-    max_freq: isize,   // 新增：全局最大频率，用于限制单次控制幅度
+    is_janked: bool,   // 当前帧是否卡顿
+    max_freq: isize,   // 全局最大频率，用于限制单次控制幅度
 }
 
 pub struct Looper {
@@ -95,6 +97,8 @@ impl Looper {
         extension: Extension,
         controller: Controller,
     ) -> Self {
+        let params = config.controller_params.clone();
+
         Self {
             analyzer_state: AnalyzerState {
                 analyzer,
@@ -115,11 +119,11 @@ impl Looper {
             },
             controller_state: ControllerState {
                 controller,
-                params: ControllerParams::default(),
+                params,
                 target_fps_offset: 0.0,
                 usage_sample_timer: Instant::now(),
-                is_janked: false,     // 初始化
-                max_freq: 2918400,    // 根据实际设备调整
+                is_janked: false,
+                max_freq: 2_918_400, // 会在 do_policy 里按设备实际最高频刷新
             },
         }
     }
@@ -212,16 +216,16 @@ impl Looper {
             return;
         }
 
-        // 刷新各 policy 的 CPU 利用率
-        for cpu in &mut self.controller_state.controller.cpu_infos {
+        // 1. 刷新各 policy 的 CPU 利用率
+        for cpu in self.controller_state.controller.cpu_infos_mut() {
             cpu.refresh_cpu_usage();
         }
 
-        // 获取所有 policy 中的最大利用率
+        // 2. 取所有 policy 中的最大利用率
         let max_cpu_util = self
             .controller_state
             .controller
-            .cpu_infos
+            .cpu_infos()
             .iter()
             .map(|cpu| cpu.cpu_usage() as f64)
             .fold(0.0f64, f64::max);
@@ -229,13 +233,19 @@ impl Looper {
         #[cfg(debug_assertions)]
         debug!("max_cpu_util: {max_cpu_util:.4}");
 
-        // 设置 is_janked 标志
-        self.controller_state.is_janked = self
-            .fas_state
-            .buffer
-            .as_ref()
-            .map_or(false, |b| b.frametime_state.janked);
+        // 3. 动态刷新 max_freq（设备实际最高频）
+        if let Some(mf) = self
+            .controller_state
+            .controller
+            .cpu_infos()
+            .iter()
+            .flat_map(|info| info.freqs.iter().copied())
+            .max()
+        {
+            self.controller_state.max_freq = mf as isize;
+        }
 
+        // 4. 调用 calculate_control，返回 (control, is_janked)
         let (control, is_janked) = if let Some(buffer) = &self.fas_state.buffer {
             let target_fps_offset = self
                 .therminal
@@ -247,12 +257,14 @@ impl Looper {
                 self.fas_state.mode,
                 &mut self.controller_state,
                 target_fps_offset,
-                max_cpu_util,   // 传入
+                max_cpu_util,
             )
             .unwrap_or_default()
         } else {
             return;
         };
+
+        self.controller_state.is_janked = is_janked;
 
         #[cfg(debug_assertions)]
         debug!("control: {control}khz");
@@ -285,7 +297,6 @@ impl Looper {
             self.enable_fas();
         }
     }
-
 
     pub fn disable_fas(&mut self) {
         match self.fas_state.working_state {
@@ -355,5 +366,4 @@ impl Looper {
             Some(BufferWorkingState::Unusable)
         }
     }
-    
 }
