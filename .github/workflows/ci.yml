@@ -1,7 +1,19 @@
 # Copyright 2023-2025, dependabot[bot], shadow3, shadow3aaa
 #
 # This file is part of fas-rs.
-# ... (许可证注释保持不变)
+#
+# fas-rs is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free
+# Software Foundation, either version 3 of the License, or (at your option)
+# any later version.
+#
+# fas-rs is distributed in the hope that it will be useful, but WITHOUT ANY
+# WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+# FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
+# details.
+#
+# You should have received a copy of the GNU General Public License along
+# with fas-rs. If not, see <https://www.gnu.org/licenses/>.
 
 name: ci-build
 on:
@@ -18,7 +30,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Setup ndk
         run: |
-          # ===== 修改1：固定 NDK 版本为 r26b，避免 r30 的严格检查 =====
+          # 固定 NDK 版本为 r26b，避免 r30 对目标三元组的严格检查
           wget -O ndk.zip https://dl.google.com/android/repository/android-ndk-r26b-linux.zip -nv
           mkdir -p ~/ndk_temp
           unzip ndk.zip -d ~/ndk_temp 2>&1 > /dev/null
@@ -31,14 +43,13 @@ jobs:
           rustup update
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo ndk
-        # ===== 修改2：固定 cargo-ndk 版本为 4.1.2 =====
+        # 固定 cargo-ndk 版本为 4.1.2，避免未来 breaking change
         run: cargo install cargo-ndk --version 4.1.2
-      # ===== 新增：使用预编译的 bpf-linker =====
+      # 使用预编译的 bpf-linker
       - name: Install bpf-linker
         uses: taiki-e/install-action@v2
         with:
           tool: bpf-linker
-      # ========================================
       - name: Setup WebUI Deps
         run: |
           npm install next@latest react@latest react-dom@latest
@@ -52,14 +63,32 @@ jobs:
         run: |
           export ANDROID_NDK_HOME=$(realpath ~/ndk_temp)
           export ANDROID_NDK_ROOT=$ANDROID_NDK_HOME
-          # ===== 修改3：显式设置 bindgen 环境变量（注意下划线格式） =====
-          export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--target=aarch64-linux-android31 --sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
-          # ===== 新增：调试输出，确认环境变量已生效 =====
+
+          # 交叉编译目标配置
+          export TARGET_TRIPLE="aarch64-linux-android"
+          export NDK_TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
+          export NDK_API_LEVEL=31
+
+          # 为 cc crate / luajit-src 显式指定交叉编译器
+          export CC_${TARGET_TRIPLE//-/_}="$NDK_TOOLCHAIN/bin/${TARGET_TRIPLE}${NDK_API_LEVEL}-clang"
+          export AR_${TARGET_TRIPLE//-/_}="$NDK_TOOLCHAIN/bin/llvm-ar"
+          export CXX_${TARGET_TRIPLE//-/_}="$NDK_TOOLCHAIN/bin/${TARGET_TRIPLE}${NDK_API_LEVEL}-clang++"
+
+          # 引导 LuaJIT 构建系统使用 NDK 工具链
+          export LUAJIT_CROSS="${TARGET_TRIPLE}${NDK_API_LEVEL}-"
+          export LUAJIT_STATIC=1
+
+          # 为 binder_ndk_sys / bindgen 设置目标三元组（注意下划线格式）
+          export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--target=${TARGET_TRIPLE}${NDK_API_LEVEL} --sysroot=$NDK_TOOLCHAIN/sysroot"
+
           echo "===== Environment Check ====="
+          echo "CC_aarch64_linux_android = $CC_aarch64_linux_android"
+          echo "AR_aarch64_linux_android = $AR_aarch64_linux_android"
+          echo "LUAJIT_CROSS = $LUAJIT_CROSS"
           echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android = $BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android"
-          echo "ANDROID_NDK_HOME = $ANDROID_NDK_HOME"
-          ls -la $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/sys/cdefs.h
+          ls -la $CC_aarch64_linux_android
           echo "============================="
+
           cargo xtask build -r -v
       - name: Cleanup
         run: rm -rf ~/ndk_temp
@@ -80,7 +109,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Setup ndk
         run: |
-          # ===== 修改1：固定 NDK 版本为 r26b =====
           wget -O ndk.zip https://dl.google.com/android/repository/android-ndk-r26b-linux.zip -nv
           mkdir -p ~/ndk_temp
           unzip ndk.zip -d ~/ndk_temp 2>&1 > /dev/null
@@ -93,14 +121,11 @@ jobs:
           rustup update
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo ndk
-        # ===== 修改2：固定 cargo-ndk 版本为 4.1.2 =====
         run: cargo install cargo-ndk --version 4.1.2
-      # ===== 新增：使用预编译的 bpf-linker =====
       - name: Install bpf-linker
         uses: taiki-e/install-action@v2
         with:
           tool: bpf-linker
-      # ========================================
       - name: Setup WebUI Deps
         run: |
           npm install next@latest react@latest react-dom@latest
@@ -114,14 +139,28 @@ jobs:
         run: |
           export ANDROID_NDK_HOME=$(realpath ~/ndk_temp)
           export ANDROID_NDK_ROOT=$ANDROID_NDK_HOME
-          # ===== 修改3：显式设置 bindgen 环境变量（注意下划线格式） =====
-          export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--target=aarch64-linux-android31 --sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
-          # ===== 新增：调试输出，确认环境变量已生效 =====
+
+          export TARGET_TRIPLE="aarch64-linux-android"
+          export NDK_TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
+          export NDK_API_LEVEL=31
+
+          export CC_${TARGET_TRIPLE//-/_}="$NDK_TOOLCHAIN/bin/${TARGET_TRIPLE}${NDK_API_LEVEL}-clang"
+          export AR_${TARGET_TRIPLE//-/_}="$NDK_TOOLCHAIN/bin/llvm-ar"
+          export CXX_${TARGET_TRIPLE//-/_}="$NDK_TOOLCHAIN/bin/${TARGET_TRIPLE}${NDK_API_LEVEL}-clang++"
+
+          export LUAJIT_CROSS="${TARGET_TRIPLE}${NDK_API_LEVEL}-"
+          export LUAJIT_STATIC=1
+
+          export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--target=${TARGET_TRIPLE}${NDK_API_LEVEL} --sysroot=$NDK_TOOLCHAIN/sysroot"
+
           echo "===== Environment Check ====="
+          echo "CC_aarch64_linux_android = $CC_aarch64_linux_android"
+          echo "AR_aarch64_linux_android = $AR_aarch64_linux_android"
+          echo "LUAJIT_CROSS = $LUAJIT_CROSS"
           echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android = $BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android"
-          echo "ANDROID_NDK_HOME = $ANDROID_NDK_HOME"
-          ls -la $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/sys/cdefs.h
+          ls -la $CC_aarch64_linux_android
           echo "============================="
+
           cargo xtask build -v
       - name: Prepare artifacts
         run: |
