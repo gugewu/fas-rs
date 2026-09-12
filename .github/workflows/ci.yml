@@ -30,8 +30,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Setup ndk
         run: |
-          # 固定使用 r26b 版本，它对 bindgen 更友好
-          wget -O ndk.zip https://dl.google.com/android/repository/android-ndk-r26b-linux.zip -nv
+          ndk_url=$(wget -qO- https://github.com/android/ndk/releases/latest | grep -e 'https://dl.google.com/android/repository/android-ndk-.*-linux.zip' | sed -n 's/.*<a href="\([^"]*\)".*/\1/p')
+          wget -O ndk.zip $ndk_url -nv
           mkdir -p ~/ndk_temp
           unzip ndk.zip -d ~/ndk_temp 2>&1 > /dev/null
           mv ~/ndk_temp/*/* ~/ndk_temp
@@ -41,13 +41,15 @@ jobs:
           rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
           rustup component add rust-src
           rustup update
-      # 注意：为保证修改生效，暂时移除 rust-cache 步骤
+      - uses: Swatinem/rust-cache@v2
       - name: Install cargo ndk
-        run: cargo install cargo-ndk --version 4.1.2
+        run: cargo install cargo-ndk
+      # ===== 新增：使用预编译的 bpf-linker =====
       - name: Install bpf-linker
         uses: taiki-e/install-action@v2
         with:
           tool: bpf-linker
+      # ========================================
       - name: Setup WebUI Deps
         run: |
           npm install next@latest react@latest react-dom@latest
@@ -61,33 +63,6 @@ jobs:
         run: |
           export ANDROID_NDK_HOME=$(realpath ~/ndk_temp)
           export ANDROID_NDK_ROOT=$ANDROID_NDK_HOME
-
-          export TARGET_TRIPLE="aarch64-linux-android"
-          export NDK_TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
-          export NDK_API_LEVEL=31
-
-          # 为 cc crate 和 lua-src 设置交叉编译器
-          export CC_${TARGET_TRIPLE//-/_}="$NDK_TOOLCHAIN/bin/${TARGET_TRIPLE}${NDK_API_LEVEL}-clang"
-          export AR_${TARGET_TRIPLE//-/_}="$NDK_TOOLCHAIN/bin/llvm-ar"
-
-          # ===== 关键修改：强制 mlua-sys 静态链接 Lua =====
-          export LUA_LIB_NAME="lua5.4"
-          export LUA_LINK="static"
-
-          # ===== 关键修改：显式传递链接参数 =====
-          # 告诉链接器去链接 dl 和 m 库，并导出 Lua 符号
-          export RUSTFLAGS="-C link-arg=-ldl -C link-arg=-lm -C link-arg=-rdynamic"
-
-          # 为 binder_ndk_sys / bindgen 设置目标三元组
-          export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--target=${TARGET_TRIPLE}${NDK_API_LEVEL} --sysroot=$NDK_TOOLCHAIN/sysroot"
-
-          echo "===== Environment Check ====="
-          echo "LUA_LIB_NAME = $LUA_LIB_NAME"
-          echo "LUA_LINK = $LUA_LINK"
-          echo "RUSTFLAGS = $RUSTFLAGS"
-          echo "BINDGEN_EXTRA_CLANG_ARGS = $BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android"
-          echo "============================="
-
           cargo xtask build -r -v
       - name: Cleanup
         run: rm -rf ~/ndk_temp
@@ -108,8 +83,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Setup ndk
         run: |
-          wget -O ndk.zip https://dl.google.com/android/repository/android-ndk-r26b-linux.zip -nv
-          mkdir -p ~/ndk_temp
+          ndk_url=$(wget -qO- https://github.com/android/ndk/releases/latest | grep -e 'https://dl.google.com/android/repository/android-ndk-.*-linux.zip' | sed -n 's/.*<a href="\([^"]*\)".*/\1/p')
+          wget -O ndk.zip $ndk_url -nv
+          mkdir ~/ndk_temp
           unzip ndk.zip -d ~/ndk_temp 2>&1 > /dev/null
           mv ~/ndk_temp/*/* ~/ndk_temp
       - name: Setup rust toolchains
@@ -118,13 +94,15 @@ jobs:
           rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
           rustup component add rust-src
           rustup update
-      # 注意：为保证修改生效，暂时移除 rust-cache 步骤
+      - uses: Swatinem/rust-cache@v2
       - name: Install cargo ndk
-        run: cargo install cargo-ndk --version 4.1.2
+        run: cargo install cargo-ndk
+      # ===== 新增：使用预编译的 bpf-linker =====
       - name: Install bpf-linker
         uses: taiki-e/install-action@v2
         with:
           tool: bpf-linker
+      # ========================================
       - name: Setup WebUI Deps
         run: |
           npm install next@latest react@latest react-dom@latest
@@ -138,30 +116,6 @@ jobs:
         run: |
           export ANDROID_NDK_HOME=$(realpath ~/ndk_temp)
           export ANDROID_NDK_ROOT=$ANDROID_NDK_HOME
-
-          export TARGET_TRIPLE="aarch64-linux-android"
-          export NDK_TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
-          export NDK_API_LEVEL=31
-
-          export CC_${TARGET_TRIPLE//-/_}="$NDK_TOOLCHAIN/bin/${TARGET_TRIPLE}${NDK_API_LEVEL}-clang"
-          export AR_${TARGET_TRIPLE//-/_}="$NDK_TOOLCHAIN/bin/llvm-ar"
-
-          # ===== 关键修改：强制 mlua-sys 静态链接 Lua =====
-          export LUA_LIB_NAME="lua5.4"
-          export LUA_LINK="static"
-
-          # ===== 关键修改：显式传递链接参数 =====
-          export RUSTFLAGS="-C link-arg=-ldl -C link-arg=-lm -C link-arg=-rdynamic"
-
-          export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--target=${TARGET_TRIPLE}${NDK_API_LEVEL} --sysroot=$NDK_TOOLCHAIN/sysroot"
-
-          echo "===== Environment Check ====="
-          echo "LUA_LIB_NAME = $LUA_LIB_NAME"
-          echo "LUA_LINK = $LUA_LINK"
-          echo "RUSTFLAGS = $RUSTFLAGS"
-          echo "BINDGEN_EXTRA_CLANG_ARGS = $BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android"
-          echo "============================="
-
           cargo xtask build -v
       - name: Prepare artifacts
         run: |
