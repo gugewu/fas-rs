@@ -22,6 +22,8 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use toml::Table;
 
+use super::super::scheduler::looper::policy::ControllerParams;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ConfigData {
     pub config: Config,
@@ -32,6 +34,9 @@ pub struct ConfigData {
     pub balance: ModeConfig,
     pub performance: ModeConfig,
     pub fast: ModeConfig,
+
+    #[serde(default)]
+    pub controller_params: Option<ControllerParams>,   // 新增
 }
 
 #[allow(clippy::struct_excessive_bools)]
@@ -39,6 +44,7 @@ pub struct ConfigData {
 pub struct Config {
     #[serde(default = "Config::default_value_keep_std")]
     pub keep_std: bool,
+
     #[serde(default = "Config::default_value_scene_game_list")]
     pub scene_game_list: bool,
 }
@@ -53,6 +59,7 @@ pub struct ModeConfig {
 pub enum TemperatureThreshold {
     #[serde(rename = "disabled")]
     Disabled,
+
     #[serde(untagged)]
     Temp(u64),
 }
@@ -61,6 +68,7 @@ pub enum TemperatureThreshold {
 pub enum MarginFps {
     #[serde(untagged)]
     BaseOnly(MarginFpsValue),
+
     #[serde(untagged)]
     Advanced {
         base: MarginFpsValue,
@@ -73,6 +81,7 @@ pub enum MarginFps {
 pub enum MarginFpsValue {
     #[serde(untagged)]
     Float(f64),
+
     #[serde(untagged)]
     Int(u64),
 }
@@ -97,6 +106,7 @@ pub struct SceneAppList {
 pub struct SceneApp {
     #[serde(rename = "@name")]
     pub pkg: String,
+
     #[serde(rename = "@value")]
     pub is_game: bool,
 }
