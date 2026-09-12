@@ -25,7 +25,7 @@ use std::{
 use anyhow::{Context, Result};
 use log::warn;
 use nix::sched::CpuSet;
-use sysinfo::{CpuRefreshKind, RefreshKind, System}; // 新增导入
+use sysinfo::{CpuRefreshKind, RefreshKind, System};
 
 use super::IGNORE_MAP;
 use crate::file_handler::FileHandler;
@@ -39,7 +39,7 @@ pub struct Info {
     pub freqs: Vec<isize>,
     verify_freq: Option<isize>,
     verify_timer: Instant,
-    sys: System, // 新增字段
+    sys: System,
 }
 
 impl Info {
