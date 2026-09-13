@@ -66,6 +66,13 @@ impl FrameTimeState {
 pub struct TargetFpsState {
     pub target_fps: Option<u32>,
     target_fps_config: TargetFps,
+    // ===== 新增字段（用于贴顶升档 + 冷却回退） =====
+    /// 上一次匹配到的目标帧率，冷却期返回它
+    pub last_target: Option<u32>,
+    /// 贴顶升档连续尝试计数
+    pub upgrade_attempts: u32,
+    /// 升档失败后的冷却剩余帧数
+    pub cooldown_remaining: u32,
 }
 
 impl TargetFpsState {
@@ -73,6 +80,9 @@ impl TargetFpsState {
         Self {
             target_fps: None,
             target_fps_config,
+            last_target: None,
+            upgrade_attempts: 0,
+            cooldown_remaining: 0,
         }
     }
 }
