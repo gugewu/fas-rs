@@ -11,6 +11,27 @@ use crate::framework::{
     scheduler::looper::ControllerState,
 };
 
+/// 帧时间与利用率闭环控制器
+///
+/// # cpu_util 语义
+///
+/// 本函数接收的 `cpu_util` 由调用方通过 `cpu_cycles_reader` 计算，
+/// 语义为**频率利用率**：
+///
+/// ```text
+/// usage = cycles_delta / (duration * scaling_cur_freq)
+/// ```
+///
+/// 其中 `cycles_delta` 来自硬件性能计数器（真实执行周期数），
+/// `scaling_cur_freq` 是当前建议频率。该值与 `sysinfo` 的
+/// 时间片占用率不同：
+///
+/// - 不会因 CPU 降频而虚高（时间片占比的固有缺陷）
+/// - 可能因 DVFS 实际频率低于建议频率而略大于 1.0
+/// - 低负载场景下会明显偏低，从而触发主动降频、消除空转
+///
+/// 因此本函数在入口处将该值 clamp 到 `[0.0, 1.0]`，保证阈值
+/// 比较行为可预测。
 pub fn calculate_control(
     buffer: &Buffer,
     config: &mut Config,
@@ -22,6 +43,10 @@ pub fn calculate_control(
     if unlikely(buffer.frametime_state.frametimes.len() < 60) {
         return None;
     }
+
+    // cpu_util 由调用方通过 CyclesReader 计算，可能略大于 1.0，
+    // 统一 clamp 到 [0.0, 1.0] 后参与阈值比较。
+    let cpu_util = cpu_util.clamp(0.0, 1.0);
 
     let target_fps = f64::from(buffer.target_fps_state.target_fps?);
     let margin_fps: f64 = match &config.mode_config(mode).margin_fps {
@@ -43,7 +68,7 @@ pub fn calculate_control(
         debug!("adjusted_target_fps: {adjusted_target_fps}");
         debug!("adjusted_last_frame: {adjusted_last_frame:?}");
         debug!("target_frametime: {target_frametime:?}");
-        debug!("cpu_util: {cpu_util:.4}");
+        debug!("cpu_util (freq-based, clamped): {cpu_util:.4}");
     }
 
     // 原 PID 输出
@@ -54,12 +79,17 @@ pub fn calculate_control(
         cpu_util,
     );
 
-    // ===== 利用率闭环（修正版） =====
-    // 目标区间：80% - 90%
-    // 帧时间未达标 / 帧率未达标时，走原 PID（不掉帧优先）
+    // ===== 利用率闭环（基于频率利用率） =====
+    // 目标区间：80% - 90%（频率利用率）
+    //
+    // 与 sysinfo 旧版的区别：cpu_util 来自硬件周期数，是真实的
+    // 频率利用率。低负载场景下该值会明显低于 80%，触发主动降频，
+    // 从而消除“频率空转”。
+    //
+    // 帧时间未达标 / 帧率未达标时，走原 PID（不掉帧优先）。
     // 帧时间达标且帧率达标时，用利用率控制频率：
-    //   利用率 < 80%  → 主动降频（不依赖 raw_control）
-    //   利用率 > 90%  → 保守升频（限制升频幅度）
+    //   利用率 < 80%  → 主动降频（步长随 deficit 增大）
+    //   利用率 > 90%  → 保守升频（最多 2% max_freq）
     //   80-90%        → 维持
     const UTIL_LOW: f64 = 0.80;
     const UTIL_HIGH: f64 = 0.90;
@@ -145,13 +175,15 @@ fn calculate_control_inner(
 
     let mut control = error_p;
 
-    // 仅对正向控制（升频）进行利用率衰减
+    // 仅对正向控制（升频）进行利用率衰减。
+    //
+    // 注意：此处 cpu_util 已是频率利用率（clamp 到 [0,1]），
+    // 比 sysinfo 的时间片占比更准确地反映“CPU 是否真的忙”。
+    // 当 CPU 利用率低于 util_decay_threshold 时，说明瓶颈不在
+    // CPU，按比例抑制升频，避免频率空转。
     if control > 0.0 {
         let threshold = controller_state.params.util_decay_threshold;
         let util_factor = (cpu_util / threshold).clamp(0.0, 1.0);
-        // 【已删除 severe_miss 强制下限】
-        // 原因：帧时间严重超标但 CPU 利用率低时，说明瓶颈不在 CPU，
-        //       强制升频只会导致频率空转。
         control *= util_factor;
     }
 
