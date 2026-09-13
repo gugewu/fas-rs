@@ -46,7 +46,7 @@ pub fn calculate_control(
         debug!("cpu_util: {cpu_util:.4}");
     }
 
-    // ---- 原 PID 输出 ----
+    // 原 PID 输出
     let raw_control = calculate_control_inner(
         controller_state,
         adjusted_last_frame,
@@ -54,12 +54,12 @@ pub fn calculate_control(
         cpu_util,
     );
 
-    // ===== 利用率闭环（新增） =====
+    // ===== 利用率闭环（修正版） =====
     // 目标区间：80% - 90%
     // 帧时间未达标 / 帧率未达标时，走原 PID（不掉帧优先）
     // 帧时间达标且帧率达标时，用利用率控制频率：
-    //   利用率 < 80%  → 降频（频率给多了）
-    //   利用率 > 90%  → 保守升频（留余量）
+    //   利用率 < 80%  → 主动降频（不依赖 raw_control）
+    //   利用率 > 90%  → 保守升频（限制升频幅度）
     //   80-90%        → 维持
     const UTIL_LOW: f64 = 0.80;
     const UTIL_HIGH: f64 = 0.90;
@@ -69,21 +69,21 @@ pub fn calculate_control(
 
     let control = if !frametime_miss && fps_ok {
         if cpu_util < UTIL_LOW {
-            // 利用率偏低：频率给多了，主动降频
-            // deficit 越大，降频步长越大（2% ~ 10% max_freq）
+            // 利用率低 → 主动降频（不依赖 raw_control）
+            // deficit 越大，降频步长越大（5% ~ 20% max_freq）
             let deficit = (UTIL_LOW - cpu_util) / UTIL_LOW;
-            let step = (controller_state.max_freq as f64 * (0.02 + deficit * 0.08)) as isize;
-            (-step).max(raw_control)
+            let step = (controller_state.max_freq as f64 * (0.05 + deficit * 0.15)) as isize;
+            -step
         } else if cpu_util > UTIL_HIGH {
-            // 利用率偏高：留余量，保守升频（最多 2% max_freq）
+            // 利用率高 → 保守升频（最多 2% max_freq）
             let step = (controller_state.max_freq as f64 * 0.02) as isize;
-            step.min(raw_control)
+            raw_control.min(step)
         } else {
-            // 落在 80-90% 区间，维持现状
+            // 80-90% 维持
             0
         }
     } else {
-        // 帧时间未达标或帧率未达标：走原 PID 控制
+        // 帧时间未达标或帧率未达标 → 走原 PID
         raw_control
     };
     // ===== 利用率闭环结束 =====
