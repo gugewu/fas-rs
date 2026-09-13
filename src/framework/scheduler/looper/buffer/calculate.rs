@@ -7,30 +7,6 @@ use log::debug;
 use super::Buffer;
 use crate::{Extension, api::trigger_target_fps_change, framework::config::TargetFps};
 
-// ========== TargetFpsState 结构体（需修改） ==========
-#[derive(Debug, Clone)]
-pub struct TargetFpsState {
-    pub target_fps_config: TargetFps,
-    pub target_fps: Option<u32>,
-    // 新增字段
-    pub last_target: Option<u32>,
-    pub upgrade_attempts: u32,
-    pub cooldown_remaining: u32,
-}
-
-impl Default for TargetFpsState {
-    fn default() -> Self {
-        Self {
-            target_fps_config: TargetFps::Value(60),
-            target_fps: None,
-            last_target: None,
-            upgrade_attempts: 0,
-            cooldown_remaining: 0,
-        }
-    }
-}
-
-// ========== impl Buffer ==========
 impl Buffer {
     pub fn calculate_current_fps(&mut self) {
         let avg_time_long = self.calculate_average_frametime(None);
@@ -42,8 +18,9 @@ impl Buffer {
         debug!("current_fps_long: {current_fps_long:.2}");
         self.frametime_state.current_fps_long = current_fps_long;
 
-        let avg_time_short = self
-            .calculate_average_frametime(self.target_fps().map(|target_fps| target_fps as usize));
+        // ===== 修复 E0502：先算出 target_fps（可变借用在此结束），再传 Option<usize> 给 &self 方法 =====
+        let target_fps_usize = self.target_fps().map(|t| t as usize);
+        let avg_time_short = self.calculate_average_frametime(target_fps_usize);
         #[cfg(debug_assertions)]
         debug!("avg_time_short: {avg_time_short:?}");
         self.frametime_state.avg_time_short = avg_time_short;
@@ -93,7 +70,11 @@ impl Buffer {
         trigger_target_fps_change(extension, target_fps, self.package_info.pkg.clone());
     }
 
-    /// 修复后的 target_fps：固定下限 15、从高到低遍历、贴顶升档、冷却回退
+    /// 修复后的 target_fps：
+    /// 1. 固定下限 15
+    /// 2. 档位从高到低遍历
+    /// 3. 贴顶升档 + 连续尝试计数
+    /// 4. 升档失败进入冷却，冷却期返回上次目标
     fn target_fps(&mut self) -> Option<u32> {
         const MIN_FPS: f64 = 15.0;
         const MARGIN: f64 = 3.0;
