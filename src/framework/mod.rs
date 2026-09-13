@@ -22,6 +22,8 @@ mod node;
 mod pid_utils;
 pub mod prelude;
 mod scheduler;
+// === 新增：频率利用率权重计算模块 ===
+mod weighting;
 
 #[allow(unused_imports)]
 pub use config::Config;
