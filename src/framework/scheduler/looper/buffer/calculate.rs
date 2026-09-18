@@ -69,11 +69,13 @@ impl Buffer {
         trigger_target_fps_change(extension, target_fps, self.package_info.pkg.clone());
     }
 
-    /// 修复后的 target_fps：
+    /// target_fps：
     /// 1. 固定下限 15
-    /// 2. 档位从高到低遍历
+    /// 2. 匹配规则：选择"不超过 current_fps + MARGIN 的最大候选"
+    ///    （原逻辑是"从高到低第一个 fps <= target + MARGIN 的候选"，
+    ///     对 fps=98, MARGIN=3 会错误命中 120，因为 98 <= 123）
     /// 3. 贴顶升档 + 连续尝试计数
-    /// 4. 升档失败进入冷却，冷却期返回上次目标
+    /// 4. fps 高于最高档上限 + MARGIN 时进入冷却，冷却期返回上次目标
     fn target_fps(&mut self) -> Option<u32> {
         const MIN_FPS: f64 = 15.0;
         const MARGIN: f64 = 3.0;
@@ -101,46 +103,54 @@ impl Buffer {
         target_fpses.sort_unstable();
         target_fpses.dedup();
 
-        // 从高到低遍历
-        for &target_fps in target_fpses.iter().rev() {
-            let target = f64::from(target_fps);
+        let max_target = *target_fpses.last().unwrap();
 
-            // 贴顶区间：尝试升档
-            if current_fps >= target - MARGIN && current_fps <= target + MARGIN {
-                // 已是最高档，直接返回
-                if target_fps == *target_fpses.last().unwrap() {
-                    self.target_fps_state.upgrade_attempts = 0;
-                    self.target_fps_state.last_target = Some(target_fps);
-                    return Some(target_fps);
-                }
-
-                // 贴顶但未到上限，递增尝试计数
-                self.target_fps_state.upgrade_attempts += 1;
-                if self.target_fps_state.upgrade_attempts >= UPGRADE_ATTEMPTS {
-                    // 尝试升到下一档
-                    if let Some(pos) = target_fpses.iter().position(|&x| x == target_fps) {
-                        if let Some(&next) = target_fpses.get(pos + 1) {
-                            self.target_fps_state.upgrade_attempts = 0;
-                            self.target_fps_state.last_target = Some(next);
-                            return Some(next);
-                        }
-                    }
-                }
-                self.target_fps_state.last_target = Some(target_fps);
-                return Some(target_fps);
-            }
-
-            // 正常匹配：current_fps 低于该档 + margin
-            if current_fps <= target + MARGIN {
-                self.target_fps_state.upgrade_attempts = 0;
-                self.target_fps_state.last_target = Some(target_fps);
-                return Some(target_fps);
-            }
+        // fps 高于最高档上限 + MARGIN：升档失败，进入冷却
+        if current_fps > f64::from(max_target) + MARGIN {
+            self.target_fps_state.upgrade_attempts = 0;
+            self.target_fps_state.cooldown_remaining = COOLDOWN_FRAMES;
+            return Some(max_target);
         }
 
-        // 高于所有档位：升档失败，进入冷却
+        // 匹配：取"不超过 current_fps + MARGIN"的最大候选
+        // 对 [30, 60, 90, 120]，fps=98 → 只有 30/60/90 满足 t <= 101，取最大者 90
+        // 对 fps=118 → 全部满足 t <= 121，取最大者 120
+        let matched = target_fpses
+            .iter()
+            .rev()
+            .copied()
+            .find(|&t| f64::from(t) <= current_fps + MARGIN)
+            .unwrap_or(*target_fpses.first().unwrap());
+
+        let target = f64::from(matched);
+
+        // 贴顶区间：尝试升档
+        if current_fps >= target - MARGIN && current_fps <= target + MARGIN {
+            // 已是最高档，直接返回
+            if matched == max_target {
+                self.target_fps_state.upgrade_attempts = 0;
+                self.target_fps_state.last_target = Some(matched);
+                return Some(matched);
+            }
+
+            // 贴顶但未到上限，递增尝试计数
+            self.target_fps_state.upgrade_attempts += 1;
+            if self.target_fps_state.upgrade_attempts >= UPGRADE_ATTEMPTS {
+                if let Some(pos) = target_fpses.iter().position(|&x| x == matched) {
+                    if let Some(&next) = target_fpses.get(pos + 1) {
+                        self.target_fps_state.upgrade_attempts = 0;
+                        self.target_fps_state.last_target = Some(next);
+                        return Some(next);
+                    }
+                }
+            }
+            self.target_fps_state.last_target = Some(matched);
+            return Some(matched);
+        }
+
+        // 正常匹配
         self.target_fps_state.upgrade_attempts = 0;
-        self.target_fps_state.cooldown_remaining = COOLDOWN_FRAMES;
-        target_fpses.last().copied()
+        self.target_fps_state.last_target = Some(matched);
+        Some(matched)
     }
 }
