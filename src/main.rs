@@ -30,6 +30,8 @@ mod file_handler;
 mod framework;
 mod misc;
 
+mod cpu_cycles_reader;
+
 use std::{
     env, fs,
     io::{self, prelude::*},
