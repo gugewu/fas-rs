@@ -296,13 +296,13 @@ debug!("max_demand: {max_demand:.4}");
                 .target_fps_offset(&mut self.config, self.fas_state.mode);
 
             calculate_control(
-                buffer,
-                &mut self.config,
-                self.fas_state.mode,
-                &mut self.controller_state,
-                target_fps_offset,
-                max_cpu_util,
-            )
+    buffer,
+    &mut self.config,
+    self.fas_state.mode,
+    &mut self.controller_state,
+    target_fps_offset,
+    max_demand,   // [MODIFIED] 原来是 max_cpu_util
+)
             .unwrap_or_default()
         } else {
             return;
