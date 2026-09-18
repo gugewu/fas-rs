@@ -22,7 +22,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use cpu_cycles_reader::{Cycles, CyclesReader};
+use crate::cpu_cycles_reader::{Cycles, CyclesReader};
 use nix::sched::CpuSet;
 
 use super::IGNORE_MAP;
