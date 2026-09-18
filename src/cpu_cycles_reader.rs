@@ -8,27 +8,19 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
-use libc;
+use anyhow::Result;
 
-/// 一段周期数。包装 u64，提供减法和利用率换算。
+/// 一段周期数。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Cycles(pub u64);
 
 impl Cycles {
     /// 从频率（kHz）构造一个“满负载参考周期数”。
-    ///
-    /// 语义：如果 CPU 以该频率跑满整个采样窗口，应执行的周期数。
     pub fn from_khz(khz: u64) -> Self {
         Cycles(khz)
     }
 
     /// 计算利用率：实际周期数 / 满负载参考周期数。
-    ///
-    /// - `duration`：采样窗口长度
-    /// - `freq_cycles`：由 `Cycles::from_khz` 构造的参考值
-    ///
-    /// 返回值为比值，可能大于 1.0（实际频率高于参考频率时）。
     pub fn as_usage(&self, duration: Duration, freq_cycles: Cycles) -> Result<f64> {
         let seconds = duration.as_secs_f64();
         let freq_hz = freq_cycles.0 as f64 * 1000.0; // kHz -> Hz
@@ -47,7 +39,61 @@ impl std::ops::Sub for Cycles {
     }
 }
 
+// ===== perf_event_open 相关定义 =====
+//
+// `libc` crate 在 Android 目标上没有导出 `perf_event_attr` 和 PERF_* 常量，
+// 这里手动定义最小可用集合。
+
+const PERF_TYPE_HARDWARE: u32 = 0;
+const PERF_COUNT_HW_CPU_CYCLES: u64 = 0;
+
+// _IO('$', 0) 和 _IO('$', 3)，见 linux/perf_event.h
+const IOC_ENABLE: libc::c_ulong = 0x2400;
+const IOC_RESET: libc::c_ulong = 0x2403;
+
+/// 精简版 `perf_event_attr`。
+///
+/// 只声明前 64 字节的字段（PERF_ATTR_SIZE_VER0），内核只会读
+/// `attr.size` 指定的字节数，因此把 size 固定为 64 即可。
+#[repr(C)]
+struct PerfEventAttr {
+    type_: u32,
+    size: u32,
+    config: u64,
+    sample_period: u64,
+    sample_type: u64,
+    read_format: u64,
+    /// 位域：disabled:1, inherit:1, pinned:1, exclusive:1,
+    /// exclude_user:1, exclude_kernel:1, exclude_hv:1, ...
+    flags: u64,
+    wakeup_events: u32,
+    bp_type: u32,
+    config1: u64,
+}
+
+const PERF_FLAG_DISABLED: u64 = 1 << 0;
+const PERF_FLAG_INHERIT: u64 = 1 << 1;
+const PERF_FLAG_EXCLUDE_HV: u64 = 1 << 6;
+
+impl PerfEventAttr {
+    fn new() -> Self {
+        Self {
+            type_: PERF_TYPE_HARDWARE,
+            size: std::mem::size_of::<Self>() as u32,
+            config: PERF_COUNT_HW_CPU_CYCLES,
+            sample_period: 0,
+            sample_type: 0,
+            read_format: 0,
+            flags: PERF_FLAG_DISABLED | PERF_FLAG_INHERIT | PERF_FLAG_EXCLUDE_HV,
+            wakeup_events: 0,
+            bp_type: 0,
+            config1: 0,
+        }
+    }
+}
+
 /// 每个 CPU 核心一个 perf fd。
+#[derive(Debug)]
 pub struct CyclesReader {
     fds: HashMap<i32, i32>,
 }
@@ -58,23 +104,16 @@ impl CyclesReader {
         let mut fds = HashMap::with_capacity(cpus.len());
 
         for &cpu in cpus {
-            let mut attr: libc::perf_event_attr = unsafe { std::mem::zeroed() };
-            attr.type_ = libc::PERF_TYPE_HARDWARE;
-            attr.size = std::mem::size_of::<libc::perf_event_attr>() as u32;
-            attr.config = libc::PERF_COUNT_HW_CPU_CYCLES;
-            attr.disabled = 1;
-            attr.inherit = 1;
-            attr.exclude_kernel = 0;
-            attr.exclude_hv = 1;
+            let attr = PerfEventAttr::new();
 
             let fd = unsafe {
                 libc::syscall(
                     libc::SYS_perf_event_open,
-                    &attr as *const libc::perf_event_attr,
-                    -1i32,          // pid: -1 = 监控所有进程
-                    cpu as i32,     // cpu
-                    -1i32,          // group_fd
-                    0u64,           // flags
+                    &attr as *const PerfEventAttr,
+                    -1i32,      // pid: -1 = 监控所有进程
+                    cpu as i32, // cpu
+                    -1i32,      // group_fd
+                    0u64,       // flags
                 )
             };
 
@@ -94,8 +133,8 @@ impl CyclesReader {
     pub fn enable(&self) {
         for &fd in self.fds.values() {
             unsafe {
-                libc::ioctl(fd, libc::PERF_EVENT_IOC_RESET, 0);
-                libc::ioctl(fd, libc::PERF_EVENT_IOC_ENABLE, 0);
+                libc::ioctl(fd, IOC_RESET, 0);
+                libc::ioctl(fd, IOC_ENABLE, 0);
             }
         }
     }
@@ -132,8 +171,4 @@ impl Drop for CyclesReader {
             }
         }
     }
-}
-#[derive(Debug)]
-pub struct CyclesReader {
-    fds: HashMap<i32, i32>,
 }
