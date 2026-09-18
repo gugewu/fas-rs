@@ -48,8 +48,10 @@ const PERF_TYPE_HARDWARE: u32 = 0;
 const PERF_COUNT_HW_CPU_CYCLES: u64 = 0;
 
 // _IO('$', 0) 和 _IO('$', 3)，见 linux/perf_event.h
-const IOC_ENABLE: libc::c_ulong = 0x2400;
-const IOC_RESET: libc::c_ulong = 0x2403;
+// _IO('$', 0) 和 _IO('$', 3)，见 linux/perf_event.h
+// Android 上 libc::ioctl 的 request 参数是 c_int，所以这里用 i32。
+const IOC_ENABLE: libc::c_int = 0x2400;
+const IOC_RESET: libc::c_int = 0x2403;
 
 /// 精简版 `perf_event_attr`。
 ///
