@@ -4,13 +4,13 @@
 //
 // fas-rs is free software: you can redistribute it and/or modify it under
 // the terms of the GNU General Public License as published by the Free
-// Software Foundation, either version 3 of the License, or (at your
-// option) any later version.
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
 //
 // fas-rs is distributed in the hope that it will be useful, but WITHOUT ANY
-// WARRANTY; without even the implied warranty of MERCHANTABILITY or
-// FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
-// more details.
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
+// details.
 //
 // You should have received a copy of the GNU General Public License along
 // with fas-rs. If not, see <https://www.gnu.org/licenses/>.
@@ -18,7 +18,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
@@ -49,6 +49,10 @@ pub struct Info {
 
     // === 复用缓冲区 ===
     freq_buf: Vec<u64>,
+
+    // [MODIFIED] 负载需求率 EMA 平滑状态
+    demand_smoothed: f64,
+    last_demand_update: Instant,
 }
 
 impl Info {
@@ -104,6 +108,9 @@ impl Info {
             last_instant: Instant::now(),
             last_freq_khz: vec![0; n],
             freq_buf: Vec::with_capacity(n),
+            // [MODIFIED]
+            demand_smoothed: 0.0,
+            last_demand_update: Instant::now(),
         })
     }
 
@@ -117,22 +124,26 @@ impl Info {
         Ok(content.trim().parse::<u64>()?)
     }
 
+    /// 集群最高频（kHz）
+    ///
+    /// [MODIFIED] 新增：`freqs` 已在 `new()` 中升序排序，last 即最高频。
+    pub fn max_freq(&self) -> isize {
+        *self.freqs.last().unwrap_or(&0)
+    }
+
     /// 批量采样，返回集群级别的频率利用率（0.0 ~ N.0）
     ///
-    /// 与旧版 sysinfo 的 `cpu_usage()` 不同，此方法基于硬件性能计数器
-    /// 读取真实 CPU 周期数，结合当前频率计算“频率利用率”，
-    /// 消除了降频导致时间片占用率虚高的问题。
+    /// 分母为**当前频率**，反映“当前频率被用掉多少”。
+    /// 该值会因降频而虚高，仅适合诊断，不适合做降频依据。
     pub fn cluster_usage(&mut self) -> Result<f64> {
         let now = Instant::now();
         let duration = now.duration_since(self.last_instant);
 
-        // 一次性读取所有核心的周期数
         let cycles_map = self
             .cycles_reader
             .read()
             .context("Failed to read cycles")?;
 
-        // 读取所有核心的频率
         self.freq_buf.clear();
         for &cpu_id in &self.affected_cpus {
             self.freq_buf.push(Self::read_freq_khz(cpu_id)?);
@@ -164,6 +175,93 @@ impl Info {
             return Ok(0.0);
         }
         Ok(total_usage / valid_count as f64)
+    }
+
+    /// 集群级别的**负载需求率**（0.0 ~ N.0）
+    ///
+    /// [MODIFIED] 新增。
+    ///
+    /// 分母为**该集群最高频**，语义为：
+    /// “如果 CPU 跑满最高频，当前负载需要占用多少比例的周期”。
+    ///
+    /// 与 `cluster_usage()` 的区别：
+    /// - `cluster_usage` 用当前频率做分母 → 结果受当前频率影响，降频后会虚高
+    /// - `load_demand_rate` 用最高频做分母 → 结果只反映负载本身，不受频率影响
+    ///
+    /// 用途：作为降频决策的输入。`demand < 1.0` 说明当前负载
+    /// 不需要跑满最高频，有余量可降。
+    ///
+    /// 注意：本方法与 `cluster_usage()` 共享采样基准（`last_cycles` /
+    /// `last_instant`），一次控制周期内只应调用其中一个，避免重复采样
+    /// 导致基准被消耗两次。
+    pub fn load_demand_rate(&mut self) -> Result<f64> {
+        let now = Instant::now();
+        let duration = now.duration_since(self.last_instant);
+
+        let cycles_map = self
+            .cycles_reader
+            .read()
+            .context("Failed to read cycles")?;
+
+        self.freq_buf.clear();
+        for &cpu_id in &self.affected_cpus {
+            self.freq_buf.push(Self::read_freq_khz(cpu_id)?);
+        }
+
+        // 用该集群最高频作为“满负载”参考
+        let max_freq_khz = self.max_freq().max(0) as u64;
+        let max_freq_cycles = Cycles::from_khz(max_freq_khz);
+
+        let mut total_demand = 0.0f64;
+        let mut valid_count = 0usize;
+
+        for (i, &cpu_id) in self.affected_cpus.iter().enumerate() {
+            let now_cycles = cycles_map
+                .get(&(cpu_id as i32))
+                .copied()
+                .context("CPU id not found in cycles map")?;
+
+            if let Some(last) = self.last_cycles[i] {
+                let diff = now_cycles - last;
+                if let Ok(demand) = diff.as_usage(duration, max_freq_cycles) {
+                    total_demand += demand;
+                    valid_count += 1;
+                }
+            }
+            self.last_cycles[i] = Some(now_cycles);
+        }
+
+        self.last_instant = now;
+
+        if valid_count == 0 {
+            return Ok(0.0);
+        }
+        Ok(total_demand / valid_count as f64)
+    }
+
+    /// 负载需求率的 EMA 平滑版本
+    ///
+    /// [MODIFIED] 新增。
+    ///
+    /// 硬件周期采样短时波动较大，直接用于调频会引起频率抖动。
+    /// 用指数移动平均（α = 0.25）平滑，让调频决策基于趋势而非瞬时值。
+    ///
+    /// 超过 100ms 未更新时直接用原始值重置，避免长时间空窗后 EMA
+    /// 被旧值拖慢。
+    pub fn load_demand_rate_smoothed(&mut self) -> Result<f64> {
+        let raw = self.load_demand_rate()?;
+
+        const EMA_ALPHA: f64 = 0.25;
+        const RESET_WINDOW: Duration = Duration::from_millis(100);
+
+        if self.last_demand_update.elapsed() > RESET_WINDOW {
+            self.demand_smoothed = raw;
+        } else {
+            self.demand_smoothed = EMA_ALPHA * raw + (1.0 - EMA_ALPHA) * self.demand_smoothed;
+        }
+        self.last_demand_update = Instant::now();
+
+        Ok(self.demand_smoothed)
     }
 
     /// 兼容旧接口：返回 0.0 ~ 1.0 的归一化值
