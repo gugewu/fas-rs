@@ -75,6 +75,13 @@ pub(crate) struct ControllerState {
     usage_sample_timer: Instant,
     is_janked: bool,   // 当前帧是否卡顿
     max_freq: isize,   // 全局最大频率，用于限制单次控制幅度
+    // [MODIFIED] 以下三个字段用于消除多档位 fps 判定抖动
+    /// 上一帧 fps_ok 的状态，用于双阈值滞回
+    was_fps_ok: bool,
+    /// 上一次使用的控制模式：true = 利用率闭环，false = PID
+    last_control_mode: bool,
+    /// 上一次控制模式切换的时间，用于最小驻留时间限制
+    last_mode_switch: Instant,
 }
 
 pub struct Looper {
@@ -87,6 +94,8 @@ pub struct Looper {
     cleaner: Cleaner,
     fas_state: FasState,
     controller_state: ControllerState,
+    // [MODIFIED] 记录上一次的 target_fps，用于检测帧率档位切换
+    last_target_fps: Option<u32>,
 }
 
 impl Looper {
@@ -124,7 +133,15 @@ impl Looper {
                 usage_sample_timer: Instant::now(),
                 is_janked: false,
                 max_freq: 2_918_400, // 会在 do_policy 里按设备实际最高频刷新
+                // [MODIFIED] 初始化新增字段
+                was_fps_ok: false,
+                last_control_mode: false,
+                // 初始设为 10 秒前，保证首次判定可以立即进入 demand 模式，
+                // 避免启动后多跑 500ms PID。
+                last_mode_switch: Instant::now() - Duration::from_secs(10),
             },
+            // [MODIFIED]
+            last_target_fps: None,
         }
     }
 
@@ -215,6 +232,34 @@ impl Looper {
             debug!("Not running policy!");
             return;
         }
+
+        // [MODIFIED] 帧率档位切换检测。
+        //
+        // 多档位（60/90/120）时，若游戏切换档位，旧档位的帧时间会
+        // 污染新档位的 fps 判定，导致 fps_ok 在边界抖动，控制模式
+        // 反复横跳。检测到档位变化时清空帧时间窗口，并跳过本次
+        // 调频，等新档位的帧填满后再决策。
+        let current_target = self
+            .fas_state
+            .buffer
+            .as_ref()
+            .and_then(|b| b.target_fps_state.target_fps);
+
+        if self.last_target_fps.is_some() && self.last_target_fps != current_target {
+            #[cfg(debug_assertions)]
+            debug!(
+                "target_fps changed: {:?} -> {:?}, clearing buffer",
+                self.last_target_fps, current_target
+            );
+
+            if let Some(buffer) = self.fas_state.buffer.as_mut() {
+                buffer.frametime_state.frametimes.clear();
+                buffer.frametime_state.additional_frametime = Duration::ZERO;
+            }
+            self.last_target_fps = current_target;
+            return;
+        }
+        self.last_target_fps = current_target;
 
         // 1. 刷新各 policy 的 CPU 利用率
         for cpu in self.controller_state.controller.cpu_infos_mut() {
@@ -325,6 +370,14 @@ impl Looper {
                     self.fas_state.working_state = State::Working;
                     self.cleaner.cleanup();
                     self.controller_state.target_fps_offset = 0.0;
+                    // [MODIFIED] 进入 Working 时重置新增状态，避免上一局
+                    // 游戏的 fps_ok / 控制模式残留影响本次判定。
+                    self.controller_state.was_fps_ok = false;
+                    self.controller_state.last_control_mode = false;
+                    self.controller_state.last_mode_switch =
+                        Instant::now() - Duration::from_secs(10);
+                    self.last_target_fps = None;
+
                     self.controller_state.controller.init_game(
                         self.fas_state.buffer.as_ref().unwrap().package_info.pid,
                         &self.extension,
@@ -362,6 +415,10 @@ impl Looper {
             buffer.push_frametime(frametime, &self.extension);
 
             self.fas_state.buffer = Some(buffer);
+
+            // [MODIFIED] 新 buffer 建立时清空档位记录，让下一次 do_policy
+            // 把当前 target_fps 当作基线记录下来，而不是误判为档位切换。
+            self.last_target_fps = None;
 
             Some(BufferWorkingState::Unusable)
         }
