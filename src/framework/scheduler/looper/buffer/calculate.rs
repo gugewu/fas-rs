@@ -1,7 +1,6 @@
 // src/framework/scheduler/looper/buffer/calculate.rs
 
 use std::time::Duration;
-use likely_stable::unlikely;
 #[cfg(debug_assertions)]
 use log::debug;
 use super::Buffer;
