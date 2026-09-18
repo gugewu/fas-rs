@@ -23,7 +23,6 @@ use std::{
 
 use anyhow::{Context, Result};
 use cpu_cycles_reader::{Cycles, CyclesReader};
-use log::warn;
 use nix::sched::CpuSet;
 
 use super::IGNORE_MAP;
