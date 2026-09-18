@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-
+use likely_stable::unlikely;
 #[cfg(debug_assertions)]
 use log::debug;
 
