@@ -133,3 +133,7 @@ impl Drop for CyclesReader {
         }
     }
 }
+#[derive(Debug)]
+pub struct CyclesReader {
+    fds: HashMap<i32, i32>,
+}
