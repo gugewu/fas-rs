@@ -262,21 +262,20 @@ impl Looper {
         self.last_target_fps = current_target;
 
         // 1. 刷新各 policy 的 CPU 利用率
-        for cpu in self.controller_state.controller.cpu_infos_mut() {
-            cpu.refresh_cpu_usage();
-        }
+     // [MODIFIED] 用负载需求率替代频率利用率。
+//
+// cpu_usage() 的分母是当前频率，降频后会虚高，不适合做降频依据。
+// load_demand_rate_smoothed() 的分母是集群最高频，只反映负载本身。
+let max_demand = self
+    .controller_state
+    .controller
+    .cpu_infos_mut()
+    .iter_mut()
+    .map(|cpu| cpu.load_demand_rate_smoothed().unwrap_or(0.0))
+    .fold(0.0f64, f64::max);
 
-        // 2. 取所有 policy 中的最大利用率
-        let max_cpu_util = self
-            .controller_state
-            .controller
-            .cpu_infos()
-            .iter()
-            .map(|cpu| cpu.cpu_usage() as f64)
-            .fold(0.0f64, f64::max);
-
-        #[cfg(debug_assertions)]
-        debug!("max_cpu_util: {max_cpu_util:.4}");
+#[cfg(debug_assertions)]
+debug!("max_demand: {max_demand:.4}");
 
         // 3. 动态刷新 max_freq（设备实际最高频）
         if let Some(mf) = self
