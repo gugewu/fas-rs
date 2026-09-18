@@ -284,6 +284,21 @@ impl Info {
         // no-op：采样基准已在 cluster_usage 内部更新
     }
 
+    /// 重置采样基准和 EMA 状态。
+    ///
+    /// [MODIFIED] 新增：`cpu_common/mod.rs` 会调用此方法，
+    /// 在游戏切换、模式切换或长时间无帧后重置采样基准，
+    /// 避免旧的周期基准和 EMA 值污染新一段采样。
+    pub fn reset(&mut self, _file_handler: &mut FileHandler) -> Result<()> {
+        let n = self.affected_cpus.len();
+        self.last_cycles = vec![None; n];
+        self.last_instant = Instant::now();
+        self.last_freq_khz = vec![0; n];
+        self.demand_smoothed = 0.0;
+        self.last_demand_update = Instant::now();
+        Ok(())
+    }
+
     pub fn cur_freq(&self) -> isize {
         self.cur_fas_freq
     }
