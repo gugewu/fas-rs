@@ -39,7 +39,7 @@
   "delete": "删除",
   "search_app": "搜索应用...",
   "no_apps_found": "未找到应用",
-  "loading_apps": "正在加载应用..."
+  "loading_apps": "正在加载应用...",
   "tab_advanced": "高级",
   "demand_loop": "需求率闭环",
   "demand_loop_desc": "负载需求率闭环调参",
