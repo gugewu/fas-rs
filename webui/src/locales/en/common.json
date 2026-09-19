@@ -39,7 +39,7 @@
   "delete": "Delete",
   "search_app": "Search application...",
   "no_apps_found": "No applications found",
-  "loading_apps": "Loading applications..."
+  "loading_apps": "Loading applications...",
   "tab_advanced": "Advanced",
   "demand_loop": "Demand Loop",
   "demand_loop_desc": "Load-demand closed-loop tuning",
