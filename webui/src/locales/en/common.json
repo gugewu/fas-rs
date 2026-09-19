@@ -40,4 +40,22 @@
   "search_app": "Search application...",
   "no_apps_found": "No applications found",
   "loading_apps": "Loading applications..."
+  "tab_advanced": "Advanced",
+  "demand_loop": "Demand Loop",
+  "demand_loop_desc": "Load-demand closed-loop tuning",
+  "pid_tuning": "PID Tuning",
+  "pid_tuning_desc": "Raw PID fallback parameters",
+  "kp": "Kp",
+  "ki": "Ki",
+  "kd": "Kd",
+  "max_step_ratio": "Max Step Ratio",
+  "util_decay_threshold": "Util Decay Threshold",
+  "demand_low": "Demand Low",
+  "demand_high": "Demand High",
+  "demand_step_base": "Demand Step Base",
+  "demand_step_scale": "Demand Step Scale",
+  "demand_up_max": "Demand Up Max",
+  "mode_residency_ms": "Mode Residency (ms)",
+  "fps_ok_margin": "FPS OK Margin",
+  "fps_ok_recover_margin": "FPS OK Recover Margin"
 }
