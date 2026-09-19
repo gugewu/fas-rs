@@ -77,15 +77,15 @@ pub fn calculate_control(
     );
 
     // ===== 负载需求率闭环 =====
-    // 目标区间：60% - 85%（负载需求率）
-    //
-    // 帧时间未达标 / 帧率未达标时，走原 PID（不掉帧优先）。
-    // 帧时间达标且帧率达标时，用需求率控制频率：
-    //   demand < 60%  → 主动降频（步长随 deficit 增大）
-    //   demand > 85%  → 保守升频（最多 2% max_freq）
-    //   60-85%        → 维持
-    const DEMAND_LOW: f64 = 0.60;
-    const DEMAND_HIGH: f64 = 0.85;
+    // 所有阈值/步长从 params 读取，可在 webui 中调整。
+    let demand_low = controller_state.params.demand_low;
+    let demand_high = controller_state.params.demand_high;
+    let step_base = controller_state.params.demand_step_base;
+    let step_scale = controller_state.params.demand_step_scale;
+    let up_max_ratio = controller_state.params.demand_up_max;
+    let residency_ms = controller_state.params.mode_residency_ms;
+    let fps_ok_margin = controller_state.params.fps_ok_margin;
+    let fps_ok_recover_margin = controller_state.params.fps_ok_recover_margin;
 
     let frametime_miss = adjusted_last_frame > target_frametime;
     let current_fps = buffer.frametime_state.current_fps_long;
@@ -95,23 +95,23 @@ pub fn calculate_control(
     // 多档位（60/90/120）时 current_fps_long 会在目标附近抖动，
     // 单阈值判定会导致 fps_ok 每帧翻转，控制模式反复横跳，
     // 帧率卡在中间档位上不去。改为滞回：
-    //   - 已达标：掉到 target - 5 以下才认为不达标
-    //   - 未达标：爬到 target - 2 以上才认为达标
+    //   - 已达标：掉到 target - fps_ok_margin 以下才认为不达标
+    //   - 未达标：爬到 target - fps_ok_recover_margin 以上才认为达标
     let fps_ok = if controller_state.was_fps_ok {
-        current_fps >= target_fps - 5.0
+        current_fps >= target_fps - fps_ok_margin
     } else {
-        current_fps >= target_fps - 2.0
+        current_fps >= target_fps - fps_ok_recover_margin
     };
     controller_state.was_fps_ok = fps_ok;
 
     // 模式切换最小驻留时间。
     //
     // 即使 fps_ok 已稳定，frametime_miss 也可能因单帧尖峰翻转。
-    // 加入 500ms 驻留时间，切换后至少在当前模式待 500ms 才允许切回。
+    // 加入驻留时间，切换后至少在当前模式待满才允许切回。
     let want_demand_mode = !frametime_miss && fps_ok;
     let now = Instant::now();
     let can_switch = want_demand_mode == controller_state.last_control_mode
-        || controller_state.last_mode_switch.elapsed() >= Duration::from_millis(500);
+        || controller_state.last_mode_switch.elapsed() >= Duration::from_millis(residency_ms);
     let use_demand_mode = if can_switch {
         if want_demand_mode != controller_state.last_control_mode {
             controller_state.last_mode_switch = now;
@@ -130,18 +130,18 @@ pub fn calculate_control(
     );
 
     let control = if use_demand_mode {
-        if demand < DEMAND_LOW {
+        if demand < demand_low {
             // 需求率低 → 主动降频（不依赖 raw_control）
-            // deficit 越大，降频步长越大（5% ~ 20% max_freq）
-            let deficit = (DEMAND_LOW - demand) / DEMAND_LOW;
-            let step = (controller_state.max_freq as f64 * (0.05 + deficit * 0.15)) as isize;
+            // deficit 越大，降频步长越大
+            let deficit = (demand_low - demand) / demand_low;
+            let step = (controller_state.max_freq as f64 * (step_base + deficit * step_scale)) as isize;
             -step
-        } else if demand > DEMAND_HIGH {
-            // 需求率高 → 保守升频（最多 2% max_freq）
-            let step = (controller_state.max_freq as f64 * 0.02) as isize;
+        } else if demand > demand_high {
+            // 需求率高 → 保守升频
+            let step = (controller_state.max_freq as f64 * up_max_ratio) as isize;
             raw_control.min(step)
         } else {
-            // 60-85% 维持
+            // 维持
             0
         }
     } else {
@@ -155,7 +155,7 @@ pub fn calculate_control(
 
     Some((
         control,
-        buffer.frametime_state.current_fps_long < target_fps - 2.0,
+        buffer.frametime_state.current_fps_long < target_fps - fps_ok_recover_margin,
     ))
 }
 
