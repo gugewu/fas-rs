@@ -6,7 +6,8 @@ import { useConfig } from "@/hooks/useConfig";
 import { GeneralConfig } from "@/components/config/GeneralConfig";
 import { GameList } from "@/components/config/GameList";
 import { PowerModes } from "@/components/config/PowerModes";
-import { Settings, Gamepad, Zap } from "lucide-react";
+import { ControllerParams } from "@/components/config/ControllerParams";
+import { Settings, Gamepad, Zap, Sliders } from "lucide-react";
 import { ModeSwitch } from "@/components/config/ModeSwitch";
 
 export default function Home() {
@@ -15,6 +16,7 @@ export default function Home() {
     configOptions,
     gameList,
     powerModes,
+    controllerParams,
     newGamePackage,
     setNewGamePackage,
     newGameFps,
@@ -26,6 +28,7 @@ export default function Home() {
     setEditingGameFps,
     toggleConfigOption,
     updatePowerMode,
+    updateControllerParam,
     addNewGame,
     removeGame,
     startEditGame,
@@ -68,21 +71,23 @@ export default function Home() {
               <Zap className="h-4 w-4" />
               <span>{t("common:tab_power")}</span>
             </TabsTrigger>
+            <TabsTrigger
+              value="advanced"
+              className="flex items-center gap-2 data-[state=active]:bg-background data-[state=active]:shadow-sm rounded-lg transition-all duration-200"
+            >
+              <Sliders className="h-4 w-4" />
+              <span>{t("common:tab_advanced")}</span>
+            </TabsTrigger>
           </TabsList>
 
-          {/* General Config Tab */}
           <TabsContent value="config" className="space-y-4">
-            {/* Mode Switch Card */}
             <ModeSwitch />
-
-            {/* Basic Configuration Card */}
             <GeneralConfig
               configOptions={configOptions}
               toggleConfigOption={toggleConfigOption}
             />
           </TabsContent>
 
-          {/* Game List Tab */}
           <TabsContent value="games" className="space-y-4">
             <GameList
               gameList={gameList}
@@ -102,11 +107,14 @@ export default function Home() {
             />
           </TabsContent>
 
-          {/* Power Modes Tab */}
           <TabsContent value="power" className="space-y-4">
-            <PowerModes
-              powerModes={powerModes}
-              updatePowerMode={updatePowerMode}
+            <PowerModes powerModes={powerModes} updatePowerMode={updatePowerMode} />
+          </TabsContent>
+
+          <TabsContent value="advanced" className="space-y-4">
+            <ControllerParams
+              controllerParams={controllerParams}
+              updateControllerParam={updateControllerParam}
             />
           </TabsContent>
         </Tabs>
