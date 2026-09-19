@@ -9,6 +9,22 @@ export type PowerSettings = {
   core_temp_thresh: number | "disabled";
 };
 
+export type ControllerParams = {
+  kp: number;
+  ki: number;
+  kd: number;
+  max_step_ratio: number;
+  util_decay_threshold: number;
+  demand_low: number;
+  demand_high: number;
+  demand_step_base: number;
+  demand_step_scale: number;
+  demand_up_max: number;
+  mode_residency_ms: number;
+  fps_ok_margin: number;
+  fps_ok_recover_margin: number;
+};
+
 export type UpdatePowerModeFn = (
   mode: keyof PowerModes,
   setting: keyof PowerSettings,
