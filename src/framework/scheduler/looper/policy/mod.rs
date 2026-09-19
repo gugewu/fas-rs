@@ -1,3 +1,6 @@
+pub mod controll;
+
+use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControllerParams {
     /// 比例系数
