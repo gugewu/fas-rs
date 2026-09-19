@@ -9,6 +9,7 @@ import {
 import { useDebouncedCallback } from "use-debounce";
 import {
   ConfigOptions,
+  ControllerParams,
   GameList,
   PowerModes,
   FpsValue,
@@ -45,10 +46,27 @@ const defaultPowerModes: PowerModes = {
   },
 };
 
+const defaultControllerParams: ControllerParams = {
+  kp: 0.0003,
+  ki: 0.0,
+  kd: 0.0,
+  max_step_ratio: 0.15,
+  util_decay_threshold: 0.3,
+  demand_low: 0.6,
+  demand_high: 0.85,
+  demand_step_base: 0.05,
+  demand_step_scale: 0.15,
+  demand_up_max: 0.02,
+  mode_residency_ms: 500,
+  fps_ok_margin: 5.0,
+  fps_ok_recover_margin: 2.0,
+};
+
 interface ConfigContextType {
   configOptions: ConfigOptions;
   gameList: GameList;
   powerModes: PowerModes;
+  controllerParams: ControllerParams;
   newGamePackage: string;
   setNewGamePackage: Dispatch<SetStateAction<string>>;
   newGameFps: string;
@@ -63,6 +81,10 @@ interface ConfigContextType {
     mode: keyof PowerModes,
     setting: keyof PowerSettings,
     value: number | number[] | "disabled",
+  ) => void;
+  updateControllerParam: <K extends keyof ControllerParams>(
+    key: K,
+    value: ControllerParams[K],
   ) => void;
   addNewGame: () => void;
   removeGame: (gamePackage: string) => void;
@@ -82,6 +104,8 @@ export function useConfig() {
     useState<ConfigOptions>(defaultConfig);
   const [gameList, setGameList] = useState<GameList>(defaultGameList);
   const [powerModes, setPowerModes] = useState<PowerModes>(defaultPowerModes);
+  const [controllerParams, setControllerParams] =
+    useState<ControllerParams>(defaultControllerParams);
   const [language, setLanguage] = useState<"en" | "zh">("en");
 
   useEffect(() => {
@@ -91,6 +115,9 @@ export function useConfig() {
         setConfigOptions(configData.configOptions || defaultConfig);
         setGameList(configData.gameList || defaultGameList);
         setPowerModes(configData.powerModes || defaultPowerModes);
+        setControllerParams(
+          configData.controllerParams || defaultControllerParams,
+        );
       } catch (_error) {
         toast.error("Failed to load configuration");
       }
@@ -156,6 +183,14 @@ export function useConfig() {
         },
       };
     });
+    debouncedSave();
+  };
+
+  const updateControllerParam = <K extends keyof ControllerParams>(
+    key: K,
+    value: ControllerParams[K],
+  ): void => {
+    setControllerParams((prev) => ({ ...prev, [key]: value }));
     debouncedSave();
   };
 
@@ -230,17 +265,19 @@ export function useConfig() {
         configOptions,
         gameList,
         powerModes,
+        controllerParams,
       });
       toast.success("Configuration saved successfully!");
     } catch (error) {
       toast.error("Failed to save configuration: " + error);
     }
-  }, [configOptions, gameList, powerModes]);
+  }, [configOptions, gameList, powerModes, controllerParams]);
 
   const readConfig = async (): Promise<{
     configOptions: ConfigOptions;
     gameList: GameList;
     powerModes: PowerModes;
+    controllerParams: ControllerParams;
   }> => {
     if (process.env.NODE_ENV === "development") {
       return {
@@ -259,6 +296,7 @@ export function useConfig() {
           performance: { margin_fps: 0.3, core_temp_thresh: 95000 },
           fast: { margin_fps: 0, core_temp_thresh: 95000 },
         },
+        controllerParams: defaultControllerParams,
       };
     }
 
@@ -282,6 +320,7 @@ export function useConfig() {
       balance: PowerSettings;
       performance: PowerSettings;
       fast: PowerSettings;
+      controller_params?: ControllerParams;
     };
 
     return {
@@ -293,6 +332,7 @@ export function useConfig() {
         performance: configRaw.performance,
         fast: configRaw.fast,
       },
+      controllerParams: configRaw.controller_params || defaultControllerParams,
     };
   };
 
@@ -300,6 +340,7 @@ export function useConfig() {
     configOptions: ConfigOptions;
     gameList: GameList;
     powerModes: PowerModes;
+    controllerParams: ControllerParams;
   }): Promise<void> => {
     if (process.env.NODE_ENV === "development") {
       console.log("Development mode: Skipping actual config write");
@@ -314,6 +355,7 @@ export function useConfig() {
         balance: data.powerModes.balance,
         performance: data.powerModes.performance,
         fast: data.powerModes.fast,
+        controller_params: data.controllerParams,
       })
         .replace(/\[\s+/g, "[")
         .replace(/\s+\]/g, "]");
@@ -343,6 +385,7 @@ export function useConfig() {
     configOptions,
     gameList,
     powerModes,
+    controllerParams,
     newGamePackage,
     setNewGamePackage,
     newGameFps,
@@ -354,6 +397,7 @@ export function useConfig() {
     setEditingGameFps,
     toggleConfigOption,
     updatePowerMode,
+    updateControllerParam,
     addNewGame,
     removeGame,
     startEditGame,
