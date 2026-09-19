@@ -40,4 +40,22 @@
   "search_app": "搜索应用...",
   "no_apps_found": "未找到应用",
   "loading_apps": "正在加载应用..."
+  "tab_advanced": "高级",
+  "demand_loop": "需求率闭环",
+  "demand_loop_desc": "负载需求率闭环调参",
+  "pid_tuning": "PID 参数",
+  "pid_tuning_desc": "PID 回退参数",
+  "kp": "Kp",
+  "ki": "Ki",
+  "kd": "Kd",
+  "max_step_ratio": "最大步长比例",
+  "util_decay_threshold": "升频衰减阈值",
+  "demand_low": "需求率下限",
+  "demand_high": "需求率上限",
+  "demand_step_base": "降频基础步长",
+  "demand_step_scale": "降频步长系数",
+  "demand_up_max": "升频最大步长",
+  "mode_residency_ms": "模式驻留 (ms)",
+  "fps_ok_margin": "FPS 达标余量",
+  "fps_ok_recover_margin": "FPS 恢复余量"
 }
