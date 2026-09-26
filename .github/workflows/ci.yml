@@ -23,6 +23,8 @@ on:
     branches: ["master"]
 env:
   CARGO_TERM_COLOR: always
+  # 让 bpf-linker / llvm-sys 在源码编译时能找到 LLVM 23
+  LLVM_SYS_231_PREFIX: /usr/lib/llvm-23
 
 jobs:
   release-build:
@@ -53,10 +55,29 @@ jobs:
       - name: Install cargo ndk
         run: cargo install cargo-ndk
 
+      # --- 新增：安装 LLVM 23 开发库，供 bpf-linker 从源码编译时链接 libLLVM ---
+      - name: Install LLVM 23 dev files
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          sudo add-apt-repository -y \
+            "deb [signed-by=/etc/apt/trusted.gpg.d/apt.llvm.org.asc] http://apt.llvm.org/noble/ llvm-toolchain-noble-23 main"
+          sudo apt update
+          sudo apt install -y llvm-23-dev libclang-23-dev libpolly-23-dev libzstd-dev
+          /usr/lib/llvm-23/bin/llvm-config --version
+
       - name: Install bpf-linker
         uses: taiki-e/install-action@v2
         with:
           tool: bpf-linker
+
+      # --- 新增：验证 bpf-linker 在 PATH 中可被 build.rs 找到 ---
+      - name: Verify bpf-linker
+        run: |
+          echo "PATH=$PATH"
+          which bpf-linker
+          bpf-linker --version
+          ls -la "$HOME/.cargo/bin/bpf-linker"
 
       - name: Setup WebUI Deps
         run: |
@@ -70,8 +91,14 @@ jobs:
           sudo apt install gcc-multilib clang llvm libbpf-dev
 
       - name: Build
+        env:
+          LLVM_SYS_231_PREFIX: /usr/lib/llvm-23
         run: |
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          echo "LLVM_SYS_231_PREFIX=$LLVM_SYS_231_PREFIX"
+          which bpf-linker
+          bpf-linker --version
+          /usr/lib/llvm-23/bin/llvm-config --version
           ls "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" | head -5
           cargo xtask build -r -v
 
@@ -115,10 +142,29 @@ jobs:
       - name: Install cargo ndk
         run: cargo install cargo-ndk
 
+      # --- 新增：安装 LLVM 23 开发库 ---
+      - name: Install LLVM 23 dev files
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          sudo add-apt-repository -y \
+            "deb [signed-by=/etc/apt/trusted.gpg.d/apt.llvm.org.asc] http://apt.llvm.org/noble/ llvm-toolchain-noble-23 main"
+          sudo apt update
+          sudo apt install -y llvm-23-dev libclang-23-dev libpolly-23-dev libzstd-dev
+          /usr/lib/llvm-23/bin/llvm-config --version
+
       - name: Install bpf-linker
         uses: taiki-e/install-action@v2
         with:
           tool: bpf-linker
+
+      # --- 新增：验证 bpf-linker ---
+      - name: Verify bpf-linker
+        run: |
+          echo "PATH=$PATH"
+          which bpf-linker
+          bpf-linker --version
+          ls -la "$HOME/.cargo/bin/bpf-linker"
 
       - name: Setup WebUI Deps
         run: |
@@ -132,8 +178,14 @@ jobs:
           sudo apt install gcc-multilib clang llvm libbpf-dev
 
       - name: Build
+        env:
+          LLVM_SYS_231_PREFIX: /usr/lib/llvm-23
         run: |
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          echo "LLVM_SYS_231_PREFIX=$LLVM_SYS_231_PREFIX"
+          which bpf-linker
+          bpf-linker --version
+          /usr/lib/llvm-23/bin/llvm-config --version
           ls "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" | head -5
           cargo xtask build -v
 
