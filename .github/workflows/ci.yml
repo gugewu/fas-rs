@@ -70,12 +70,24 @@ jobs:
           sudo apt install gcc-multilib clang llvm libbpf-dev
 
       - name: Build
-        env:
-          CARGO_UNSTABLE_BUILD_STD: core
-          CARGO_UNSTABLE_BUILD_STD_FEATURES: compiler-builtins-mem
         run: |
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
           ls "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" | head -5
+          # 为 eBPF 目标配置 build-std 和链接器（不影响其他目标）
+          mkdir -p .cargo
+          if [ -f .cargo/config.toml ]; then
+            echo "现有的 .cargo/config.toml 内容："
+            cat .cargo/config.toml
+          fi
+          cat >> .cargo/config.toml << 'EOF'
+
+[target.bpfel-unknown-none]
+rustflags = ["-C", "linker=bpf-linker"]
+
+[unstable]
+build-std = ["core"]
+build-std-features = ["compiler-builtins-mem"]
+EOF
           cargo xtask build -r -v
 
       - name: Prepare artifacts
@@ -135,12 +147,24 @@ jobs:
           sudo apt install gcc-multilib clang llvm libbpf-dev
 
       - name: Build
-        env:
-          CARGO_UNSTABLE_BUILD_STD: core
-          CARGO_UNSTABLE_BUILD_STD_FEATURES: compiler-builtins-mem
         run: |
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
           ls "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" | head -5
+          # 为 eBPF 目标配置 build-std 和链接器（不影响其他目标）
+          mkdir -p .cargo
+          if [ -f .cargo/config.toml ]; then
+            echo "现有的 .cargo/config.toml 内容："
+            cat .cargo/config.toml
+          fi
+          cat >> .cargo/config.toml << 'EOF'
+
+[target.bpfel-unknown-none]
+rustflags = ["-C", "linker=bpf-linker"]
+
+[unstable]
+build-std = ["core"]
+build-std-features = ["compiler-builtins-mem"]
+EOF
           cargo xtask build -v
 
       - name: Prepare artifacts
