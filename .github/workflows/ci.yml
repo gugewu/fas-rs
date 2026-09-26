@@ -73,19 +73,6 @@ jobs:
         run: |
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
           ls "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" | head -5
-          mkdir -p .cargo
-          if [ -f .cargo/config.toml ]; then
-            echo "现有的 .cargo/config.toml 内容："
-            cat .cargo/config.toml
-          fi
-          printf '%s\n' \
-            '[target.bpfel-unknown-none]' \
-            'rustflags = ["-C", "linker=bpf-linker"]' \
-            '' \
-            '[unstable]' \
-            'build-std = ["std"]' \
-            'build-std-features = ["compiler-builtins-mem"]' \
-            >> .cargo/config.toml
           cargo xtask build -r -v
 
       - name: Prepare artifacts
@@ -148,19 +135,6 @@ jobs:
         run: |
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
           ls "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" | head -5
-          mkdir -p .cargo
-          if [ -f .cargo/config.toml ]; then
-            echo "现有的 .cargo/config.toml 内容："
-            cat .cargo/config.toml
-          fi
-          printf '%s\n' \
-            '[target.bpfel-unknown-none]' \
-            'rustflags = ["-C", "linker=bpf-linker"]' \
-            '' \
-            '[unstable]' \
-            'build-std = ["std"]' \
-            'build-std-features = ["compiler-builtins-mem"]' \
-            >> .cargo/config.toml
           cargo xtask build -v
 
       - name: Prepare artifacts
