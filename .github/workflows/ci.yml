@@ -4,8 +4,8 @@
 #
 # fas-rs is free software: you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free
-# Software Foundation, either version 3 of the License, or (at your
-# option) any later version.
+# Software Foundation, either version 3 of the License, or (at your option)
+# any later version.
 #
 # fas-rs is distributed in the hope that it will be useful, but WITHOUT ANY
 # WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
@@ -23,101 +23,53 @@ on:
     branches: ["master"]
 env:
   CARGO_TERM_COLOR: always
-  # 让 bpf-linker / llvm-sys 在源码编译时能找到 LLVM 23
-  LLVM_SYS_231_PREFIX: /usr/lib/llvm-23
-
 jobs:
   release-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Android NDK r26d
+      - name: Setup ndk
         run: |
-          cd "$RUNNER_TEMP"
-          wget -q https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
-          unzip -q android-ndk-r26d-linux.zip
-          NDK_PATH="$RUNNER_TEMP/android-ndk-r26d"
-          echo "ANDROID_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
-          echo "ANDROID_NDK_ROOT=$NDK_PATH" >> $GITHUB_ENV
-          echo "NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
-          echo "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
-          "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version
-
+          ndk_url=$(wget -qO- https://github.com/android/ndk/releases/latest | grep -e 'https://dl.google.com/android/repository/android-ndk-.*-linux.zip' | sed -n 's/.*<a href="\([^"]*\)".*/\1/p')
+          wget -O ndk.zip $ndk_url -nv
+          mkdir -p ~/ndk_temp
+          unzip ndk.zip -d ~/ndk_temp 2>&1 > /dev/null
+          mv ~/ndk_temp/*/* ~/ndk_temp
       - name: Setup rust toolchains
         run: |
           rustup default nightly
           rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
           rustup component add rust-src
-
+          rustup update
       - uses: Swatinem/rust-cache@v2
-
       - name: Install cargo ndk
         run: cargo install cargo-ndk
-
-      # --- 安装 LLVM 23 开发库，供 bpf-linker 从源码编译时链接 libLLVM ---
-      - name: Install LLVM 23 dev files
-        run: |
-          set -euo pipefail
-          # 1. 导入 LLVM apt 源的 GPG key
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
-            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
-          # 2. 直接写 sources.list.d，绕开 add-apt-repository 的解析
-          echo "deb [signed-by=/etc/apt/trusted.gpg.d/apt.llvm.org.asc] http://apt.llvm.org/noble/ llvm-toolchain-noble-23 main" \
-            | sudo tee /etc/apt/sources.list.d/llvm-23.list > /dev/null
-          # 3. 更新并安装
-          sudo apt update
-          sudo apt install -y llvm-23-dev libclang-23-dev libpolly-23-dev libzstd-dev
-          # 4. 验证
-          /usr/lib/llvm-23/bin/llvm-config --version
-          ls -la /usr/lib/llvm-23/lib/libLLVM*.so* || true
-
+      # ===== 新增：使用预编译的 bpf-linker =====
       - name: Install bpf-linker
         uses: taiki-e/install-action@v2
         with:
           tool: bpf-linker
-
-      - name: Verify bpf-linker
-        run: |
-          echo "PATH=$PATH"
-          which bpf-linker
-          bpf-linker --version
-          ls -la "$HOME/.cargo/bin/bpf-linker"
-
+      # ========================================
       - name: Setup WebUI Deps
         run: |
           npm install next@latest react@latest react-dom@latest
           cd webui
           npm install
-
       - name: Other deps
         run: |
           sudo apt update
           sudo apt install gcc-multilib clang llvm libbpf-dev
-
       - name: Build
-        env:
-          LLVM_SYS_231_PREFIX: /usr/lib/llvm-23
         run: |
-          # >>> 关键：把 LLVM 23 的 bin 前置到 PATH，让 bpf-linker 的 build.rs
-          #     用 /usr/lib/llvm-23 而不是 NDK 的 llvm-config
-          export PATH="/usr/lib/llvm-23/bin:$PATH"
-          echo "which llvm-config: $(which llvm-config)"
-          llvm-config --version
-          llvm-config --prefix
-
-          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
-          echo "LLVM_SYS_231_PREFIX=$LLVM_SYS_231_PREFIX"
-          which bpf-linker
-          bpf-linker --version
-          ls "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" | head -5
+          export ANDROID_NDK_HOME=$(realpath ~/ndk_temp)
+          export ANDROID_NDK_ROOT=$ANDROID_NDK_HOME
           cargo xtask build -r -v
-
+      - name: Cleanup
+        run: rm -rf ~/ndk_temp
       - name: Prepare artifacts
         run: |
           mkdir -p output/artifact/release
           unzip "output/fas-rs(release).zip" -d output/artifact/release
-
       - name: Upload release version
         uses: actions/upload-artifact@v4
         with:
@@ -129,87 +81,46 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Android NDK r26d
+      - name: Setup ndk
         run: |
-          cd "$RUNNER_TEMP"
-          wget -q https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
-          unzip -q android-ndk-r26d-linux.zip
-          NDK_PATH="$RUNNER_TEMP/android-ndk-r26d"
-          echo "ANDROID_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
-          echo "ANDROID_NDK_ROOT=$NDK_PATH" >> $GITHUB_ENV
-          echo "NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
-          echo "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
-          "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version
-
+          ndk_url=$(wget -qO- https://github.com/android/ndk/releases/latest | grep -e 'https://dl.google.com/android/repository/android-ndk-.*-linux.zip' | sed -n 's/.*<a href="\([^"]*\)".*/\1/p')
+          wget -O ndk.zip $ndk_url -nv
+          mkdir ~/ndk_temp
+          unzip ndk.zip -d ~/ndk_temp 2>&1 > /dev/null
+          mv ~/ndk_temp/*/* ~/ndk_temp
       - name: Setup rust toolchains
         run: |
           rustup default nightly
           rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
           rustup component add rust-src
-
+          rustup update
       - uses: Swatinem/rust-cache@v2
-
       - name: Install cargo ndk
         run: cargo install cargo-ndk
-
-      - name: Install LLVM 23 dev files
-        run: |
-          set -euo pipefail
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
-            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
-          echo "deb [signed-by=/etc/apt/trusted.gpg.d/apt.llvm.org.asc] http://apt.llvm.org/noble/ llvm-toolchain-noble-23 main" \
-            | sudo tee /etc/apt/sources.list.d/llvm-23.list > /dev/null
-          sudo apt update
-          sudo apt install -y llvm-23-dev libclang-23-dev libpolly-23-dev libzstd-dev
-          /usr/lib/llvm-23/bin/llvm-config --version
-          ls -la /usr/lib/llvm-23/lib/libLLVM*.so* || true
-
+      # ===== 新增：使用预编译的 bpf-linker =====
       - name: Install bpf-linker
         uses: taiki-e/install-action@v2
         with:
           tool: bpf-linker
-
-      - name: Verify bpf-linker
-        run: |
-          echo "PATH=$PATH"
-          which bpf-linker
-          bpf-linker --version
-          ls -la "$HOME/.cargo/bin/bpf-linker"
-
+      # ========================================
       - name: Setup WebUI Deps
         run: |
           npm install next@latest react@latest react-dom@latest
           cd webui
           npm install
-
       - name: Other deps
         run: |
           sudo apt update
           sudo apt install gcc-multilib clang llvm libbpf-dev
-
       - name: Build
-        env:
-          LLVM_SYS_231_PREFIX: /usr/lib/llvm-23
         run: |
-          # >>> 关键：把 LLVM 23 的 bin 前置到 PATH
-          export PATH="/usr/lib/llvm-23/bin:$PATH"
-          echo "which llvm-config: $(which llvm-config)"
-          llvm-config --version
-          llvm-config --prefix
-
-          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
-          echo "LLVM_SYS_231_PREFIX=$LLVM_SYS_231_PREFIX"
-          which bpf-linker
-          bpf-linker --version
-          ls "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" | head -5
+          export ANDROID_NDK_HOME=$(realpath ~/ndk_temp)
+          export ANDROID_NDK_ROOT=$ANDROID_NDK_HOME
           cargo xtask build -v
-
       - name: Prepare artifacts
         run: |
           mkdir -p output/artifact/debug
           unzip "output/fas-rs(debug).zip" -d output/artifact/debug
-
       - name: Upload debug version
         uses: actions/upload-artifact@v4
         with:
