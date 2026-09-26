@@ -55,7 +55,7 @@ jobs:
       - name: Install cargo ndk
         run: cargo install cargo-ndk
 
-      # --- 新增：安装 LLVM 23 开发库，供 bpf-linker 从源码编译时链接 libLLVM ---
+      # --- 安装 LLVM 23 开发库，供 bpf-linker 从源码编译时链接 libLLVM ---
       - name: Install LLVM 23 dev files
         run: |
           set -euo pipefail
@@ -70,13 +70,13 @@ jobs:
           sudo apt install -y llvm-23-dev libclang-23-dev libpolly-23-dev libzstd-dev
           # 4. 验证
           /usr/lib/llvm-23/bin/llvm-config --version
+          ls -la /usr/lib/llvm-23/lib/libLLVM*.so* || true
 
       - name: Install bpf-linker
         uses: taiki-e/install-action@v2
         with:
           tool: bpf-linker
 
-      # --- 新增：验证 bpf-linker 在 PATH 中可被 build.rs 找到 ---
       - name: Verify bpf-linker
         run: |
           echo "PATH=$PATH"
@@ -99,11 +99,17 @@ jobs:
         env:
           LLVM_SYS_231_PREFIX: /usr/lib/llvm-23
         run: |
+          # >>> 关键：把 LLVM 23 的 bin 前置到 PATH，让 bpf-linker 的 build.rs
+          #     用 /usr/lib/llvm-23 而不是 NDK 的 llvm-config
+          export PATH="/usr/lib/llvm-23/bin:$PATH"
+          echo "which llvm-config: $(which llvm-config)"
+          llvm-config --version
+          llvm-config --prefix
+
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
           echo "LLVM_SYS_231_PREFIX=$LLVM_SYS_231_PREFIX"
           which bpf-linker
           bpf-linker --version
-          /usr/lib/llvm-23/bin/llvm-config --version
           ls "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" | head -5
           cargo xtask build -r -v
 
@@ -147,28 +153,23 @@ jobs:
       - name: Install cargo ndk
         run: cargo install cargo-ndk
 
-      # --- 新增：安装 LLVM 23 开发库，供 bpf-linker 从源码编译时链接 libLLVM ---
       - name: Install LLVM 23 dev files
         run: |
           set -euo pipefail
-          # 1. 导入 LLVM apt 源的 GPG key
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
             | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
-          # 2. 直接写 sources.list.d，绕开 add-apt-repository 的解析
           echo "deb [signed-by=/etc/apt/trusted.gpg.d/apt.llvm.org.asc] http://apt.llvm.org/noble/ llvm-toolchain-noble-23 main" \
             | sudo tee /etc/apt/sources.list.d/llvm-23.list > /dev/null
-          # 3. 更新并安装
           sudo apt update
           sudo apt install -y llvm-23-dev libclang-23-dev libpolly-23-dev libzstd-dev
-          # 4. 验证
           /usr/lib/llvm-23/bin/llvm-config --version
+          ls -la /usr/lib/llvm-23/lib/libLLVM*.so* || true
 
       - name: Install bpf-linker
         uses: taiki-e/install-action@v2
         with:
           tool: bpf-linker
 
-      # --- 新增：验证 bpf-linker 在 PATH 中可被 build.rs 找到 ---
       - name: Verify bpf-linker
         run: |
           echo "PATH=$PATH"
@@ -191,11 +192,16 @@ jobs:
         env:
           LLVM_SYS_231_PREFIX: /usr/lib/llvm-23
         run: |
+          # >>> 关键：把 LLVM 23 的 bin 前置到 PATH
+          export PATH="/usr/lib/llvm-23/bin:$PATH"
+          echo "which llvm-config: $(which llvm-config)"
+          llvm-config --version
+          llvm-config --prefix
+
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
           echo "LLVM_SYS_231_PREFIX=$LLVM_SYS_231_PREFIX"
           which bpf-linker
           bpf-linker --version
-          /usr/lib/llvm-23/bin/llvm-config --version
           ls "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" | head -5
           cargo xtask build -v
 
