@@ -83,7 +83,7 @@ jobs:
             'rustflags = ["-C", "linker=bpf-linker"]' \
             '' \
             '[unstable]' \
-            'build-std = ["core"]' \
+            'build-std = ["std"]' \
             'build-std-features = ["compiler-builtins-mem"]' \
             >> .cargo/config.toml
           cargo xtask build -r -v
@@ -158,7 +158,7 @@ jobs:
             'rustflags = ["-C", "linker=bpf-linker"]' \
             '' \
             '[unstable]' \
-            'build-std = ["core"]' \
+            'build-std = ["std"]' \
             'build-std-features = ["compiler-builtins-mem"]' \
             >> .cargo/config.toml
           cargo xtask build -v
