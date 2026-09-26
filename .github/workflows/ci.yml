@@ -23,132 +23,128 @@ on:
     branches: ["master"]
 env:
   CARGO_TERM_COLOR: always
+
 jobs:
   release-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Setup ndk
+
+      - name: Setup Android NDK r26d
         run: |
-          ndk_url=$(wget -qO- https://github.com/android/ndk/releases/latest | grep -e 'https://dl.google.com/android/repository/android-ndk-.*-linux.zip' | sed -n 's/.*<a href="\([^"]*\)".*/\1/p')
-          wget -O ndk.zip $ndk_url -nv
-          mkdir -p ~/ndk_temp
-          unzip ndk.zip -d ~/ndk_temp 2>&1 > /dev/null
-          mv ~/ndk_temp/*/* ~/ndk_temp
+          cd "$RUNNER_TEMP"
+          wget -q https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
+          unzip -q android-ndk-r26d-linux.zip
+          NDK_PATH="$RUNNER_TEMP/android-ndk-r26d"
+          echo "ANDROID_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$NDK_PATH" >> $GITHUB_ENV
+          echo "NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+          echo "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+          "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version
+
       - name: Setup rust toolchains
         run: |
           rustup default nightly
           rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
           rustup component add rust-src
-          rustup update
+
       - uses: Swatinem/rust-cache@v2
+
       - name: Install cargo ndk
         run: cargo install cargo-ndk
+
+      - name: Install bpf-linker
+        uses: taiki-e/install-action@v2
+        with:
+          tool: bpf-linker
+
       - name: Setup WebUI Deps
         run: |
           npm install next@latest react@latest react-dom@latest
           cd webui
           npm install
+
       - name: Other deps
         run: |
           sudo apt update
-          sudo apt install gcc-multilib
+          sudo apt install gcc-multilib clang llvm libbpf-dev
+
       - name: Build
         run: |
-          export ANDROID_NDK_HOME=$(realpath ~/ndk_temp)
-          export ANDROID_NDK_ROOT=$ANDROID_NDK_HOME
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          ls "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" | head -5
           cargo xtask build -r -v
-      - name: Cleanup
-        run: rm -rf ~/ndk_temp
+
       - name: Prepare artifacts
         run: |
           mkdir -p output/artifact/release
           unzip "output/fas-rs(release).zip" -d output/artifact/release
+
       - name: Upload release version
         uses: actions/upload-artifact@v4
         with:
           name: fas-rs(release)
           compression-level: 9
           path: output/artifact/release
-  
+
   debug-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Setup ndk
+
+      - name: Setup Android NDK r26d
         run: |
-          ndk_url=$(wget -qO- https://github.com/android/ndk/releases/latest | grep -e 'https://dl.google.com/android/repository/android-ndk-.*-linux.zip' | sed -n 's/.*<a href="\([^"]*\)".*/\1/p')
-          wget -O ndk.zip $ndk_url -nv
-          mkdir ~/ndk_temp
-          unzip ndk.zip -d ~/ndk_temp 2>&1 > /dev/null
-          mv ~/ndk_temp/*/* ~/ndk_temp
+          cd "$RUNNER_TEMP"
+          wget -q https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
+          unzip -q android-ndk-r26d-linux.zip
+          NDK_PATH="$RUNNER_TEMP/android-ndk-r26d"
+          echo "ANDROID_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$NDK_PATH" >> $GITHUB_ENV
+          echo "NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+          echo "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+          "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --version
+
       - name: Setup rust toolchains
         run: |
           rustup default nightly
           rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
           rustup component add rust-src
-          rustup update
+
       - uses: Swatinem/rust-cache@v2
+
       - name: Install cargo ndk
         run: cargo install cargo-ndk
+
+      - name: Install bpf-linker
+        uses: taiki-e/install-action@v2
+        with:
+          tool: bpf-linker
+
       - name: Setup WebUI Deps
         run: |
           npm install next@latest react@latest react-dom@latest
           cd webui
           npm install
+
       - name: Other deps
         run: |
           sudo apt update
-          sudo apt install gcc-multilib
+          sudo apt install gcc-multilib clang llvm libbpf-dev
+
       - name: Build
         run: |
-          export ANDROID_NDK_HOME=$(realpath ~/ndk_temp)
-          export ANDROID_NDK_ROOT=$ANDROID_NDK_HOME
-    
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          ls "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" | head -5
           cargo xtask build -v
+
       - name: Prepare artifacts
         run: |
           mkdir -p output/artifact/debug
           unzip "output/fas-rs(debug).zip" -d output/artifact/debug
+
       - name: Upload debug version
         uses: actions/upload-artifact@v4
         with:
           name: fas-rs(debug)
           compression-level: 9
           path: output/artifact/debug
-  
-  push_to_ci_group:
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    name: Push to CI Group
-    needs:
-      - debug-build
-      - release-build
-    steps:
-      - name: Download Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-      - name: Package Artifacts
-        run: |
-          cd "${{ github.workspace }}/artifacts/fas-rs(debug)"
-          zip -9 -rq "../fas-rs(debug)" .
-          cd "${{ github.workspace }}/artifacts/fas-rs(release)"
-          zip -9 -rq "../fas-rs(release)" .
-      - name: Post to Debug Group
-        shell: bash
-        env:
-          GROUP_DEBUG_ID: ${{ secrets.TELEGRAM_TO }}
-          BOT_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          THREAD_ID: ${{ secrets.THREAD_ID }}
-          COMMIT_MESSAGE: |+
-            New push to GitHub
-            ```
-            ${{ github.event.head_commit.message }}
-            ```by `${{ github.event.head_commit.author.name }}`
-            See commit detail [here](${{ github.event.head_commit.url }})
-        run: |
-          ESCAPED=$(python3 -c 'import json,os,urllib.parse; print(urllib.parse.quote(json.dumps(os.environ["COMMIT_MESSAGE"])))')
-          cd ${{ github.workspace }}
-          echo $COMMIT_MESSAGE_FIXED
-          curl -v "https://api.telegram.org/bot${BOT_TOKEN}/sendMediaGroup?chat_id=${GROUP_DEBUG_ID}&message_thread_id=${THREAD_ID}&media=%5B%7B%22type%22:%22document%22,%20%22media%22:%22attach://debug_zip%22,%22parse_mode%22:%22MarkdownV2%22,%22caption%22:\"\"%7D,%7B%22type%22:%22document%22,%20%22media%22:%22attach://release_zip%22,%22parse_mode%22:%22MarkdownV2%22,%22caption%22:${ESCAPED}%7D%5D" -F debug_zip="@artifacts/fas-rs(debug).zip" -F release_zip="@artifacts/fas-rs(release).zip"
