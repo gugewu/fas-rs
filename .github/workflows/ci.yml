@@ -46,7 +46,6 @@ jobs:
         run: |
           rustup default nightly
           rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
-          rustup target add bpfel-unknown-none
           rustup component add rust-src
 
       - uses: Swatinem/rust-cache@v2
@@ -71,6 +70,9 @@ jobs:
           sudo apt install gcc-multilib clang llvm libbpf-dev
 
       - name: Build
+        env:
+          CARGO_UNSTABLE_BUILD_STD: core
+          CARGO_UNSTABLE_BUILD_STD_FEATURES: compiler-builtins-mem
         run: |
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
           ls "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" | head -5
@@ -109,7 +111,6 @@ jobs:
         run: |
           rustup default nightly
           rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
-          rustup target add bpfel-unknown-none
           rustup component add rust-src
 
       - uses: Swatinem/rust-cache@v2
@@ -134,6 +135,9 @@ jobs:
           sudo apt install gcc-multilib clang llvm libbpf-dev
 
       - name: Build
+        env:
+          CARGO_UNSTABLE_BUILD_STD: core
+          CARGO_UNSTABLE_BUILD_STD_FEATURES: compiler-builtins-mem
         run: |
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
           ls "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" | head -5
