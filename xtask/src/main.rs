@@ -23,7 +23,8 @@ use std::{
     process::{self, Command},
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use cargo_metadata::MetadataCommand;
 use clap::{Parser, Subcommand};
 use fs_extra::{dir, file};
 use zip::{CompressionMethod, write::FileOptions};
@@ -114,13 +115,79 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn build(release: bool, verbose: bool) -> Result<()> {
-    let temp_dir = temp_dir(release);
+/// 构建 eBPF 程序并返回生成的对象文件路径。
+///
+/// 该函数会：
+/// 1. 通过 `cargo metadata` 查找 `frame-analyzer-ebpf` 包；
+/// 2. 使用 `bpfel-unknown-none` 目标构建它；
+/// 3. 返回生成的对象文件路径，供 `FRAME_ANALYZER_EBPF_PATH` 使用。
+fn build_ebpf() -> Result<PathBuf> {
+    let metadata = MetadataCommand::new()
+        .exec()
+        .context("执行 cargo metadata 失败")?;
 
+    // 优先查找名叫 frame-analyzer-ebpf 的包
+    // 如果实际包名不同，请在这里调整（可用 `cargo metadata | jq` 查看包名）
+    let ebpf_pkg = metadata
+        .packages
+        .iter()
+        .find(|p| p.name == "frame-analyzer-ebpf")
+        .context("在工作区中找不到 `frame-analyzer-ebpf` 包")?;
+
+    let manifest_path = ebpf_pkg.manifest_path.as_std_path().to_path_buf();
+
+    // 使用与主构建相同的 target 目录，便于缓存共享
+    let target_dir = Path::new("target");
+
+    println!(
+        "Building eBPF: {} (manifest: {:?})",
+        ebpf_pkg.name, manifest_path
+    );
+
+    let status = Command::new("cargo")
+        .args([
+            "build",
+            "--manifest-path",
+            manifest_path.to_str().unwrap(),
+            "--target",
+            "bpfel-unknown-none",
+            "--release",
+            "--target-dir",
+            target_dir.to_str().unwrap(),
+        ])
+        .status()
+        .context("执行 cargo build (eBPF) 失败")?;
+
+    if !status.success() {
+        anyhow::bail!("构建 eBPF 程序失败，退出码: {:?}", status.code());
+    }
+
+    let ebpf_path = target_dir
+        .join("bpfel-unknown-none")
+        .join("release")
+        .join("frame-analyzer-ebpf");
+
+    if !ebpf_path.exists() {
+        anyhow::bail!("eBPF 对象文件不存在: {:?}", ebpf_path);
+    }
+
+    println!("eBPF object: {:?}", ebpf_path);
+
+    Ok(ebpf_path)
+}
+
+fn build(release: bool, verbose: bool) -> Result<()> {
+    // 1. 先构建 eBPF 程序（必须）
+    let ebpf_path = build_ebpf()?;
+
+    // 2. 准备临时打包目录
+    let temp_dir = temp_dir(release);
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir)?;
 
+    // 3. 构建 Android 目标，并注入 FRAME_ANALYZER_EBPF_PATH
     let mut cargo = cargo_ndk();
+    cargo.env("FRAME_ANALYZER_EBPF_PATH", &ebpf_path);
     cargo.args([
         "build",
         "--target",
@@ -134,43 +201,45 @@ fn build(release: bool, verbose: bool) -> Result<()> {
     if release {
         cargo.arg("--release");
     }
-
     if verbose {
         cargo.arg("--verbose");
     }
 
-    cargo.spawn()?.wait()?;
+    let status = cargo.spawn().context("启动 cargo ndk build 失败")?.wait()?;
+    if !status.success() {
+        anyhow::bail!("Android 目标构建失败，退出码: {:?}", status.code());
+    }
 
+    // 4. 打包 module 目录
     let module_dir = module_dir();
     dir::copy(
         &module_dir,
         &temp_dir,
         &dir::CopyOptions::new().overwrite(true).content_only(true),
-    )
-    .unwrap();
-    fs::remove_file(temp_dir.join(".gitignore")).unwrap();
+    )?;
+    let _ = fs::remove_file(temp_dir.join(".gitignore"));
     file::copy(
         bin_path(release),
         temp_dir.join("fas-rs"),
         &file::CopyOptions::new().overwrite(true),
-    )
-    .unwrap();
+    )?;
 
+    // 5. 构建 webui 并复制产物
     build_webui()?;
     dir::copy(
         webroot_dir(),
         &temp_dir,
         &dir::CopyOptions::new().overwrite(true),
-    )
-    .unwrap();
+    )?;
 
+    // 6. 打包 zip
     let build_type = if release { "release" } else { "debug" };
     let package_path = Path::new("output").join(format!("fas-rs({build_type}).zip"));
 
     let options: FileOptions<'_, ()> = FileOptions::default()
         .compression_method(CompressionMethod::Deflated)
         .compression_level(Some(9));
-    zip_create_from_directory_with_options(&package_path, &temp_dir, |_| options).unwrap();
+    zip_create_from_directory_with_options(&package_path, &temp_dir, |_| options)?;
 
     println!("fas-rs built successfully: {:?}", package_path);
 
@@ -178,7 +247,11 @@ fn build(release: bool, verbose: bool) -> Result<()> {
 }
 
 fn check(release: bool, verbose: bool) -> Result<()> {
+    // check 也需要 eBPF 路径，因为 frame-analyzer 是编译期依赖
+    let ebpf_path = build_ebpf()?;
+
     let mut cargo = cargo_ndk();
+    cargo.env("FRAME_ANALYZER_EBPF_PATH", &ebpf_path);
     cargo.args([
         "check",
         "--target",
@@ -193,12 +266,14 @@ fn check(release: bool, verbose: bool) -> Result<()> {
     if release {
         cargo.arg("--release");
     }
-
     if verbose {
         cargo.arg("--verbose");
     }
 
-    cargo.spawn()?.wait()?;
+    let status = cargo.spawn().context("启动 cargo ndk check 失败")?.wait()?;
+    if !status.success() {
+        anyhow::bail!("cargo check 失败，退出码: {:?}", status.code());
+    }
 
     Ok(())
 }
@@ -207,7 +282,10 @@ fn clean() -> Result<()> {
     let temp_dir = temp_dir(false);
     let _ = fs::remove_dir_all(&temp_dir);
 
-    Command::new("cargo").arg("clean").spawn()?.wait()?;
+    let status = Command::new("cargo").arg("clean").spawn()?.wait()?;
+    if !status.success() {
+        anyhow::bail!("cargo clean 失败");
+    }
 
     Ok(())
 }
@@ -218,14 +296,20 @@ fn format(verbose: bool) -> Result<()> {
     if verbose {
         command.arg("--verbose");
     }
-    command.spawn()?.wait()?;
-
+    let status = command.spawn()?.wait()?;
+    if !status.success() {
+        anyhow::bail!("cargo fmt 失败");
+    }
     Ok(())
 }
 
 fn lint(fix: bool) -> Result<()> {
+    // clippy 也会编译 frame-analyzer，所以同样需要 eBPF 路径
+    let ebpf_path = build_ebpf()?;
+
     let command_builder = |fix: bool| {
         let mut command = cargo_ndk();
+        command.env("FRAME_ANALYZER_EBPF_PATH", &ebpf_path);
         command.arg("clippy");
         if fix {
             command.args(["--fix", "--allow-dirty", "--allow-staged", "--all"]);
@@ -234,22 +318,36 @@ fn lint(fix: bool) -> Result<()> {
         command
     };
 
-    command_builder(fix).spawn()?.wait()?;
-    command_builder(fix).arg("--release").spawn()?.wait()?;
+    let status = command_builder(fix).spawn()?.wait()?;
+    if !status.success() {
+        anyhow::bail!("cargo clippy 失败");
+    }
+
+    let status = command_builder(fix).arg("--release").spawn()?.wait()?;
+    if !status.success() {
+        anyhow::bail!("cargo clippy (release) 失败");
+    }
 
     Ok(())
 }
 
 fn update() -> Result<()> {
-    Command::new("cargo")
+    let status = Command::new("cargo")
         .args(["update", "--recursive"])
         .spawn()?
         .wait()?;
-    Command::new("cargo")
+    if !status.success() {
+        anyhow::bail!("cargo update 失败");
+    }
+
+    let status = Command::new("cargo")
         .current_dir("xtask")
         .args(["update", "--recursive"])
         .spawn()?
         .wait()?;
+    if !status.success() {
+        anyhow::bail!("xtask cargo update 失败");
+    }
 
     Ok(())
 }
@@ -291,8 +389,15 @@ fn build_webui() -> Result<()> {
         command
     };
 
-    npm().arg("install").spawn()?.wait()?;
-    npm().args(["run", "build"]).spawn()?.wait()?;
+    let status = npm().arg("install").spawn()?.wait()?;
+    if !status.success() {
+        anyhow::bail!("npm install 失败");
+    }
+
+    let status = npm().args(["run", "build"]).spawn()?.wait()?;
+    if !status.success() {
+        anyhow::bail!("npm run build 失败");
+    }
 
     Ok(())
 }
