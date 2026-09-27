@@ -1,4 +1,4 @@
-// Copyright 2025-2025, dependabot[bot], shadow3aaa
+// Copyright 2025-2025, dependabot[bot], shadow3, shadow3aaa
 //
 // This file is part of fas-rs.
 //
@@ -117,17 +117,14 @@ fn main() -> Result<()> {
 
 /// 构建 eBPF 程序并返回生成的对象文件路径。
 ///
-/// 该函数会：
-/// 1. 通过 `cargo metadata` 查找 `frame-analyzer-ebpf` 包；
-/// 2. 使用 `bpfel-unknown-none` 目标构建它；
-/// 3. 返回生成的对象文件路径，供 `FRAME_ANALYZER_EBPF_PATH` 使用。
+/// `bpfel-unknown-none` 是 Tier 3 目标，rustup 不提供预编译的 `core`，
+/// 因此必须使用 `-Z build-std=core` 从 rust-src 现场构建。
 fn build_ebpf() -> Result<PathBuf> {
     let metadata = MetadataCommand::new()
         .exec()
         .context("执行 cargo metadata 失败")?;
 
-    // 优先查找名叫 frame-analyzer-ebpf 的包
-    // 如果实际包名不同，请在这里调整（可用 `cargo metadata | jq` 查看包名）
+    // 查找 eBPF 包。若实际包名不同，请修改此处。
     let ebpf_pkg = metadata
         .packages
         .iter()
@@ -135,8 +132,6 @@ fn build_ebpf() -> Result<PathBuf> {
         .context("在工作区中找不到 `frame-analyzer-ebpf` 包")?;
 
     let manifest_path = ebpf_pkg.manifest_path.as_std_path().to_path_buf();
-
-    // 使用与主构建相同的 target 目录，便于缓存共享
     let target_dir = Path::new("target");
 
     println!(
@@ -151,6 +146,8 @@ fn build_ebpf() -> Result<PathBuf> {
             manifest_path.to_str().unwrap(),
             "--target",
             "bpfel-unknown-none",
+            "-Z",
+            "build-std=core",
             "--release",
             "--target-dir",
             target_dir.to_str().unwrap(),
@@ -162,6 +159,7 @@ fn build_ebpf() -> Result<PathBuf> {
         anyhow::bail!("构建 eBPF 程序失败，退出码: {:?}", status.code());
     }
 
+    // eBPF 产物路径（cargo 默认以包名命名二进制）
     let ebpf_path = target_dir
         .join("bpfel-unknown-none")
         .join("release")
@@ -177,15 +175,15 @@ fn build_ebpf() -> Result<PathBuf> {
 }
 
 fn build(release: bool, verbose: bool) -> Result<()> {
-    // 1. 先构建 eBPF 程序（必须）
+    // 1. 先构建 eBPF 程序（frame-analyzer 编译期依赖）
     let ebpf_path = build_ebpf()?;
 
-    // 2. 准备临时打包目录
+    // 2. 准备打包临时目录
     let temp_dir = temp_dir(release);
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir)?;
 
-    // 3. 构建 Android 目标，并注入 FRAME_ANALYZER_EBPF_PATH
+    // 3. 构建 Android 目标，注入 FRAME_ANALYZER_EBPF_PATH
     let mut cargo = cargo_ndk();
     cargo.env("FRAME_ANALYZER_EBPF_PATH", &ebpf_path);
     cargo.args([
@@ -247,7 +245,7 @@ fn build(release: bool, verbose: bool) -> Result<()> {
 }
 
 fn check(release: bool, verbose: bool) -> Result<()> {
-    // check 也需要 eBPF 路径，因为 frame-analyzer 是编译期依赖
+    // check 同样需要 eBPF 路径（frame-analyzer 是编译期依赖）
     let ebpf_path = build_ebpf()?;
 
     let mut cargo = cargo_ndk();
@@ -304,7 +302,7 @@ fn format(verbose: bool) -> Result<()> {
 }
 
 fn lint(fix: bool) -> Result<()> {
-    // clippy 也会编译 frame-analyzer，所以同样需要 eBPF 路径
+    // clippy 也会编译 frame-analyzer，同样需要 eBPF 路径
     let ebpf_path = build_ebpf()?;
 
     let command_builder = |fix: bool| {
