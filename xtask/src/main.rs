@@ -117,33 +117,70 @@ fn main() -> Result<()> {
 
 /// 构建 eBPF 程序并返回生成的对象文件路径。
 ///
-/// `bpfel-unknown-none` 是 Tier 3 目标，rustup 不提供预编译的 `core`，
-/// 因此必须使用 `-Z build-std=core` 从 rust-src 现场构建。
+/// 说明：`frame-analyzer-ebpf` 并不作为 Rust 依赖出现在 `fas-rs` 的依赖图中，
+/// 它只是被 `frame-analyzer` 在编译期通过 `include_bytes_aligned!(env!("FRAME_ANALYZER_EBPF_PATH"))`
+/// 嵌入。因此不能通过 `cargo metadata` 的 packages 列表查找。
+///
+/// 我们改为从 `frame-analyzer` 的 manifest 路径反推其 git checkout 的仓库根目录，
+/// 再在该目录下寻找 eBPF 程序包。
 fn build_ebpf() -> Result<PathBuf> {
     let metadata = MetadataCommand::new()
         .exec()
         .context("执行 cargo metadata 失败")?;
 
-    // 查找 eBPF 包。若实际包名不同，请修改此处。
-    let ebpf_pkg = metadata
+    // 1. 通过 frame-analyzer 定位 git checkout 的仓库根目录
+    let frame_pkg = metadata
         .packages
         .iter()
-        .find(|p| p.name == "frame-analyzer-ebpf")
-        .context("在工作区中找不到 `frame-analyzer-ebpf` 包")?;
+        .find(|p| p.name == "frame-analyzer")
+        .context("在依赖图中找不到 `frame-analyzer` 包")?;
 
-    let manifest_path = ebpf_pkg.manifest_path.as_std_path().to_path_buf();
+    let frame_manifest = frame_pkg.manifest_path.as_std_path();
+    // 期望路径: <checkout>/<rev>/frame-analyzer/Cargo.toml
+    // 上两级即为 <checkout>/<rev>/
+    let repo_root = frame_manifest
+        .parent() // <rev>/frame-analyzer/
+        .and_then(|p| p.parent()) // <rev>/
+        .context("无法从 frame-analyzer 的 manifest 推断 eBPF 仓库根目录")?;
+
+    println!("eBPF repo root: {:?}", repo_root);
+
+    // 2. 尝试若干可能的 eBPF 包目录名
+    //    如果实际目录名不在其中，日志里会打印 repo_root，
+    //    你照着加一个候选名即可。
+    let candidates = [
+        "frame-analyzer-ebpf",
+        "frame-analyzer-ebpf-programs",
+        "ebpf",
+        "frame-analyzer-ebpf-user",
+    ];
+    let mut ebpf_manifest: Option<PathBuf> = None;
+    for name in &candidates {
+        let manifest = repo_root.join(name).join("Cargo.toml");
+        if manifest.exists() {
+            ebpf_manifest = Some(manifest);
+            break;
+        }
+    }
+    let ebpf_manifest = ebpf_manifest.with_context(|| {
+        format!(
+            "在 {:?} 下找不到 eBPF 包（已尝试: {:?}）",
+            repo_root, candidates
+        )
+    })?;
+
+    println!("eBPF manifest: {:?}", ebpf_manifest);
+
+    // 3. 编译 eBPF 程序
+    //    - bpfel-unknown-none 是 Tier 3 目标，rustup 无预编译 core，
+    //      必须通过 `-Z build-std=core` 从 rust-src 现场构建。
+    //    - CI 中不要使用 `rustup target add bpfel-unknown-none`，会失败。
     let target_dir = Path::new("target");
-
-    println!(
-        "Building eBPF: {} (manifest: {:?})",
-        ebpf_pkg.name, manifest_path
-    );
-
     let status = Command::new("cargo")
         .args([
             "build",
             "--manifest-path",
-            manifest_path.to_str().unwrap(),
+            ebpf_manifest.to_str().unwrap(),
             "--target",
             "bpfel-unknown-none",
             "-Z",
@@ -159,19 +196,47 @@ fn build_ebpf() -> Result<PathBuf> {
         anyhow::bail!("构建 eBPF 程序失败，退出码: {:?}", status.code());
     }
 
-    // eBPF 产物路径（cargo 默认以包名命名二进制）
-    let ebpf_path = target_dir
-        .join("bpfel-unknown-none")
-        .join("release")
-        .join("frame-analyzer-ebpf");
-
-    if !ebpf_path.exists() {
-        anyhow::bail!("eBPF 对象文件不存在: {:?}", ebpf_path);
-    }
+    // 4. 在 release 目录下查找产物（兼容自定义 bin 名）
+    let release_dir = target_dir.join("bpfel-unknown-none").join("release");
+    let ebpf_path = find_ebpf_object(&release_dir)?;
 
     println!("eBPF object: {:?}", ebpf_path);
 
     Ok(ebpf_path)
+}
+
+/// 在指定目录下查找 eBPF 产物（跳过 .d/.rlib/.rmeta/隐藏文件）。
+fn find_ebpf_object(dir: &Path) -> Result<PathBuf> {
+    if !dir.exists() {
+        anyhow::bail!("eBPF 产物目录不存在: {:?}", dir);
+    }
+    let mut fallback: Option<PathBuf> = None;
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if name.starts_with('.')
+            || name.ends_with(".d")
+            || name.ends_with(".rlib")
+            || name.ends_with(".rmeta")
+        {
+            continue;
+        }
+        // 优先返回名字里包含 "ebpf" 或 "frame" 的产物
+        if name.contains("ebpf") || name.contains("frame") {
+            return Ok(path);
+        }
+        if fallback.is_none() {
+            fallback = Some(path);
+        }
+    }
+    fallback.with_context(|| format!("在 {:?} 下找不到 eBPF 对象文件", dir))
 }
 
 fn build(release: bool, verbose: bool) -> Result<()> {
