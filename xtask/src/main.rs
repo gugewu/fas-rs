@@ -115,14 +115,17 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// 构建 eBPF 程序并返回生成的对象文件路径。
+/// 构建 eBPF 程序并返回生成的对象文件路径（绝对路径）。
 ///
 /// 说明：`frame-analyzer-ebpf` 并不作为 Rust 依赖出现在 `fas-rs` 的依赖图中，
-/// 它只是被 `frame-analyzer` 在编译期通过 `include_bytes_aligned!(env!("FRAME_ANALYZER_EBPF_PATH"))`
-/// 嵌入。因此不能通过 `cargo metadata` 的 packages 列表查找。
+/// 它只是被 `frame-analyzer` 在编译期通过
+/// `include_bytes_aligned!(env!("FRAME_ANALYZER_EBPF_PATH"))` 嵌入。
+/// 因此不能通过 `cargo metadata` 的 packages 列表查找。
 ///
-/// 我们改为从 `frame-analyzer` 的 manifest 路径反推其 git checkout 的仓库根目录，
-/// 再在该目录下寻找 eBPF 程序包。
+/// **重要**：`frame-analyzer` 编译时会把 `FRAME_ANALYZER_EBPF_PATH` 的值当作
+/// **相对于它自己源码目录**（`frame-analyzer/src/`）的相对路径来解析。
+/// 因此这里必须返回**绝对路径**，否则会得到
+/// `<checkout>/frame-analyzer/src/target/...` 这种错误路径。
 fn build_ebpf() -> Result<PathBuf> {
     let metadata = MetadataCommand::new()
         .exec()
@@ -146,8 +149,6 @@ fn build_ebpf() -> Result<PathBuf> {
     println!("eBPF repo root: {:?}", repo_root);
 
     // 2. 尝试若干可能的 eBPF 包目录名
-    //    如果实际目录名不在其中，日志里会打印 repo_root，
-    //    你照着加一个候选名即可。
     let candidates = [
         "frame-analyzer-ebpf",
         "frame-analyzer-ebpf-programs",
@@ -171,11 +172,15 @@ fn build_ebpf() -> Result<PathBuf> {
 
     println!("eBPF manifest: {:?}", ebpf_manifest);
 
-    // 3. 编译 eBPF 程序
-    //    - bpfel-unknown-none 是 Tier 3 目标，rustup 无预编译 core，
-    //      必须通过 `-Z build-std=core` 从 rust-src 现场构建。
-    //    - CI 中不要使用 `rustup target add bpfel-unknown-none`，会失败。
-    let target_dir = Path::new("target");
+    // 3. 使用**绝对路径**作为 target-dir
+    //    这样下游 frame-analyzer 编译时不会把 FRAME_ANALYZER_EBPF_PATH
+    //    错误地相对 frame-analyzer/src/ 解析。
+    let target_dir = std::env::current_dir()
+        .context("获取当前工作目录失败")?
+        .join("target");
+
+    println!("eBPF target dir: {:?}", target_dir);
+
     let status = Command::new("cargo")
         .args([
             "build",
@@ -196,9 +201,13 @@ fn build_ebpf() -> Result<PathBuf> {
         anyhow::bail!("构建 eBPF 程序失败，退出码: {:?}", status.code());
     }
 
-    // 4. 在 release 目录下查找产物（兼容自定义 bin 名）
+    // 4. 在 release 目录下查找产物
     let release_dir = target_dir.join("bpfel-unknown-none").join("release");
     let ebpf_path = find_ebpf_object(&release_dir)?;
+
+    // 5. 兜底：确保最终返回的是绝对路径
+    let ebpf_path = fs::canonicalize(&ebpf_path)
+        .with_context(|| format!("无法获取 eBPF 产物的绝对路径: {:?}", ebpf_path))?;
 
     println!("eBPF object: {:?}", ebpf_path);
 
@@ -248,7 +257,7 @@ fn build(release: bool, verbose: bool) -> Result<()> {
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir)?;
 
-    // 3. 构建 Android 目标，注入 FRAME_ANALYZER_EBPF_PATH
+    // 3. 构建 Android 目标，注入 FRAME_ANALYZER_EBPF_PATH（绝对路径）
     let mut cargo = cargo_ndk();
     cargo.env("FRAME_ANALYZER_EBPF_PATH", &ebpf_path);
     cargo.args([
