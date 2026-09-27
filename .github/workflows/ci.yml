@@ -44,6 +44,7 @@ jobs:
         run: |
           rustup default nightly
           rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
+          rustup target add bpfel-unknown-none
           rustup component add rust-src
           rustup update
       - uses: Swatinem/rust-cache@v2
@@ -98,6 +99,7 @@ jobs:
         run: |
           rustup default nightly
           rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
+          rustup target add bpfel-unknown-none
           rustup component add rust-src
           rustup update
       - uses: Swatinem/rust-cache@v2
