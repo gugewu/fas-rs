@@ -28,13 +28,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # ===== 修复：NDK 固定到 r26d，不再动态拉 latest =====
+      # 原因：NDK r27+ 要求带 API level 的 target triple，
+      #       binder_ndk_sys 的 bindgen 传的是不带版本的 triple，
+      #       会被 r30 的 sys/cdefs.h 拒绝：
+      #       "Unversioned target triples are not supported!"
       - name: Setup ndk
         run: |
-          ndk_url=$(wget -qO- https://github.com/android/ndk/releases/latest | grep -e 'https://dl.google.com/android/repository/android-ndk-.*-linux.zip' | sed -n 's/.*<a href="\([^"]*\)".*/\1/p')
-          wget -O ndk.zip $ndk_url -nv
+          wget -q https://dl.google.com/android/repository/android-ndk-r26d-linux.zip -O ndk.zip
           mkdir -p ~/ndk_temp
           unzip ndk.zip -d ~/ndk_temp 2>&1 > /dev/null
           mv ~/ndk_temp/*/* ~/ndk_temp
+      # ====================================================
       - name: Setup rust toolchains
         run: |
           rustup default nightly
@@ -81,13 +86,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # ===== 修复：NDK 固定到 r26d，不再动态拉 latest =====
       - name: Setup ndk
         run: |
-          ndk_url=$(wget -qO- https://github.com/android/ndk/releases/latest | grep -e 'https://dl.google.com/android/repository/android-ndk-.*-linux.zip' | sed -n 's/.*<a href="\([^"]*\)".*/\1/p')
-          wget -O ndk.zip $ndk_url -nv
+          wget -q https://dl.google.com/android/repository/android-ndk-r26d-linux.zip -O ndk.zip
           mkdir ~/ndk_temp
           unzip ndk.zip -d ~/ndk_temp 2>&1 > /dev/null
           mv ~/ndk_temp/*/* ~/ndk_temp
+      # ====================================================
       - name: Setup rust toolchains
         run: |
           rustup default nightly
