@@ -1,4 +1,4 @@
-<div align="center"> 
+<div align="center">
 
 <img src="https://github.com/shadow3aaa/fas-rs/raw/refs/heads/master/assets/icon.svg" width="160" height="160" style="display: block; margin: 0 auto;" alt="SVG Image">
 
