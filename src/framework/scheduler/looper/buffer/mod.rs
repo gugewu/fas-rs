@@ -77,6 +77,51 @@ impl TargetFpsState {
     }
 }
 
+/// 帧率档位切换的防抖器。
+///
+/// 游戏切帧率（大厅 30fps → 游戏内 120fps）时，帧时间窗口需要若干
+/// 控制周期才能反映新档位。本结构通过"连续确认"机制避免瞬时卡顿
+/// 被误判为档位切换。
+#[derive(Debug, Default)]
+pub struct FpsSwitcher {
+    current: Option<u32>,
+    candidate: Option<u32>,
+    confirm_count: u8,
+}
+
+impl FpsSwitcher {
+    /// 连续多少个控制周期检测到同一新档位才真正切换。
+    /// 控制周期约 100ms 时，3 次约 300ms 完成切换。
+    const CONFIRM_THRESHOLD: u8 = 3;
+
+    fn update(&mut self, detected: u32) -> u32 {
+        let Some(current) = self.current else {
+            self.current = Some(detected);
+            return detected;
+        };
+
+        if detected == current {
+            self.candidate = None;
+            self.confirm_count = 0;
+            return current;
+        }
+
+        if self.candidate == Some(detected) {
+            self.confirm_count = self.confirm_count.saturating_add(1);
+            if self.confirm_count >= Self::CONFIRM_THRESHOLD {
+                self.current = Some(detected);
+                self.candidate = None;
+                self.confirm_count = 0;
+            }
+        } else {
+            self.candidate = Some(detected);
+            self.confirm_count = 1;
+        }
+
+        self.current.unwrap_or(detected)
+    }
+}
+
 #[derive(Debug)]
 pub struct BufferState {
     pub last_update: Instant,
@@ -103,6 +148,7 @@ pub struct Buffer {
     pub frametime_state: FrameTimeState,
     pub target_fps_state: TargetFpsState,
     pub state: BufferState,
+    pub fps_switcher: FpsSwitcher,
 }
 
 impl Buffer {
@@ -112,6 +158,7 @@ impl Buffer {
             frametime_state: FrameTimeState::new(),
             target_fps_state: TargetFpsState::new(target_fps_config),
             state: BufferState::new(),
+            fps_switcher: FpsSwitcher::default(),
         }
     }
 
