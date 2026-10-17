@@ -17,7 +17,6 @@
 
 use std::time::Duration;
 
-use likely_stable::unlikely;
 #[cfg(debug_assertions)]
 use log::debug;
 
@@ -73,13 +72,19 @@ impl Buffer {
     }
 
     pub fn calculate_target_fps(&mut self, extension: &Extension) {
-        let new_target_fps = self.target_fps();
-        if self.target_fps_state.target_fps != new_target_fps || new_target_fps.is_none() {
+        // 检测当前游戏运行的档位。检测失败（无法判断）时保持现有 target 不变。
+        let Some(detected) = self.detect_target_fps() else {
+            return;
+        };
+
+        // 通过防抖器决定是否真正切换
+        let new_target_fps = self.fps_switcher.update(detected);
+
+        // 只在真正切换时才触发副作用（清空帧窗口、通知外部）
+        if self.target_fps_state.target_fps != Some(new_target_fps) {
             self.reset_frametime_state();
-            if let Some(target_fps) = new_target_fps {
-                self.trigger_target_fps_change(extension, target_fps);
-            }
-            self.target_fps_state.target_fps = new_target_fps;
+            self.trigger_target_fps_change(extension, new_target_fps);
+            self.target_fps_state.target_fps = Some(new_target_fps);
             self.unusable();
         }
     }
@@ -92,26 +97,118 @@ impl Buffer {
         trigger_target_fps_change(extension, target_fps, self.package_info.pkg.clone());
     }
 
+    /// 返回当前已确认的 target_fps。
+    ///
+    /// 与旧版语义不同：旧版每次重新从配置派生；现在直接读取已确认状态，
+    /// 由 `detect_target_fps` + `FpsSwitcher` 更新。
     fn target_fps(&self) -> Option<u32> {
-        let target_fpses = match &self.target_fps_state.target_fps_config {
-            TargetFps::Value(t) => vec![*t],
-            TargetFps::Array(arr) => arr.clone(),
-        };
+        self.target_fps_state.target_fps
+    }
 
-        let current_fps = self.frametime_state.current_fps_long;
+    /// 取最近 n 帧的中位数，抗瞬时尖刺。
+    ///
+    /// `frametimes` 使用 `push_front` 推入新帧，所以 `iter().take(n)`
+    /// 取到的就是"最近的 n 帧"。
+    fn recent_frametime_median(&self, n: usize) -> Option<Duration> {
+        let mut recent: Vec<Duration> = self
+            .frametime_state
+            .frametimes
+            .iter()
+            .take(n)
+            .copied()
+            .collect();
 
-        if unlikely(current_fps < (target_fpses.first()?.saturating_sub(10).max(10)).into()) {
+        if recent.is_empty() {
             return None;
         }
 
-        for &target_fps in &target_fpses {
-            if current_fps <= f64::from(target_fps) + 3.0 {
+        recent.sort_unstable();
+        Some(recent[recent.len() / 2])
+    }
+
+    /// 从帧时间分布反推当前游戏运行的档位。
+    ///
+    /// 关键设计：
+    /// 1. 用最近 20 帧的**中位数**而非全量平均，切档后 ~200ms 就能反映新档位，
+    ///    且瞬时卡顿不会把中位数拉偏；
+    /// 2. 加入**迟滞**：如果当前已有 target，且最近帧率不低于当前 target 的
+    ///    80%，保持当前 target 不降级。避免"游戏想跑 120 但只能跑到 100"被
+    ///    认输到 90；
+    /// 3. 在候选集（`TargetFps::Array`）里找**最接近**的档位；
+    /// 4. 差异超过 15% 容差时返回 `None`，让调用方保持现有 target 不动作。
+    ///
+    /// 单档位场景（`TargetFps::Value`）直接返回，不做检测。
+    fn detect_target_fps(&self) -> Option<u32> {
+        let target_fpses = match &self.target_fps_state.target_fps_config {
+            TargetFps::Value(t) => return Some(*t),
+            TargetFps::Array(arr) => arr,
+        };
+
+        if target_fpses.is_empty() {
+            return None;
+        }
+
+        // 窗口：最近 20 帧。30fps 下约 660ms，120fps 下约 166ms。
+        const WINDOW: usize = 20;
+        // 至少需要这么多帧才做判断，否则中位数不可靠
+        const MIN_SAMPLES: usize = 10;
+
+        // 数据太少（比如刚切换清空过），暂不判断
+        let available = self.frametime_state.frametimes.len().min(WINDOW);
+        if available < MIN_SAMPLES {
+            return None;
+        }
+
+        let recent = self.recent_frametime_median(WINDOW)?;
+        if recent.is_zero() {
+            return None;
+        }
+
+        let recent_fps = 1.0 / recent.as_secs_f64();
+
+        // 迟滞：只在"可能降级"时生效，防止因游戏跑不满而认输到低档位
+        if let Some(current) = self.target_fps_state.target_fps {
+            if recent_fps < f64::from(current) && recent_fps >= f64::from(current) * 0.8 {
                 #[cfg(debug_assertions)]
-                debug!("Matched target_fps: current: {current_fps:.2} target_fps: {target_fps}");
-                return Some(target_fps);
+                debug!(
+                    "detect_target_fps: hysteresis, recent_fps={recent_fps:.2}, \
+                     keeping current={current}"
+                );
+                return Some(current);
             }
         }
 
-        target_fpses.last().copied()
+        // 在候选集里找最接近的档位
+        let mut best = target_fpses[0];
+        let mut best_dist = f64::MAX;
+        for &fps in target_fpses {
+            let dist = (recent_fps - f64::from(fps)).abs();
+            if dist < best_dist {
+                best_dist = dist;
+                best = fps;
+            }
+        }
+
+        // 容差 15%：比如 120fps 容差 ±18fps，60fps 容差 ±9fps。
+        // 超出容差说明最近帧率不靠近任何档位（过渡期或卡顿），
+        // 返回 None 让调用方保持现状。
+        let tolerance = f64::from(best) * 0.15;
+        if best_dist > tolerance {
+            #[cfg(debug_assertions)]
+            debug!(
+                "detect_target_fps: recent_fps={recent_fps:.2}, \
+                 best={best}, dist={best_dist:.2} > tolerance={tolerance:.2}, \
+                 keep current"
+            );
+            return None;
+        }
+
+        #[cfg(debug_assertions)]
+        debug!(
+            "detect_target_fps: recent_fps={recent_fps:.2}, \
+             matched={best}, dist={best_dist:.2}"
+        );
+
+        Some(best)
     }
 }
