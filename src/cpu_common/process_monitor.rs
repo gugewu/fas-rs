@@ -147,6 +147,23 @@ impl ProcessMonitor {
     pub fn top_threads(&self) -> impl Iterator<Item = i32> {
         self.top_trackers.keys().copied()
     }
+
+    /// 返回当前正在监控的进程 pid。无游戏时为 `None`。
+    pub fn current_pid(&self) -> Option<i32> {
+        self.current_pid
+    }
+
+    /// 返回 top 8 线程最近一次采样的 CPU 占用率（tid -> usage）。
+    ///
+    /// `current_usage` 由 `update()` 里的 `try_calculate()` 更新，
+    /// 每 300ms 一次。上层若在 `update_util_max()` 之后调用，
+    /// 拿到的就是最近一个采样窗口的数据。
+    pub fn top_thread_usage(&self) -> HashMap<i32, f64> {
+        self.top_trackers
+            .iter()
+            .map(|(&tid, tracker)| (tid, tracker.current_usage))
+            .collect()
+    }
 }
 
 fn get_thread_ids(pid: i32) -> Result<Vec<i32>> {
