@@ -370,12 +370,9 @@ impl Controller {
         control: isize,
         is_janked: bool,
     ) -> HashMap<i32, isize> {
-        let cur_fas_freq_max = self
-            .cpu_infos
-            .iter()
-            .map(|cpu| cpu.cur_fas_freq)
-            .max()
-            .unwrap_or_default();
+        // 注意：不再使用全局 `cur_fas_freq_max` 作为锚点。
+        // 每个 policy 从自己的 `cur_fas_freq` 出发，避免高权重 policy
+        // 把其他 policy 的频率一起往上拉，形成正反馈导致频率顶满。
         let cur_freq_max = self
             .cpu_infos
             .iter()
@@ -402,12 +399,13 @@ impl Controller {
                     .copied()
                     .unwrap_or(control);
 
+                // 每个 policy 用自己的当前频率作为起点
+                let anchor = cpu.cur_fas_freq;
+
                 (
                     cpu.policy,
                     if is_janked || self.util_max.is_none() {
-                        cur_fas_freq_max
-                            .saturating_add(cluster_control)
-                            .clamp(0, self.max_freq)
+                        anchor.saturating_add(cluster_control).clamp(0, self.max_freq)
                     } else {
                         let util_tracking_sugg_freq =
                             (cur_freq_max as f64 * self.util_max.unwrap() / 0.5) as isize; // min_util: 50%
@@ -418,7 +416,7 @@ impl Controller {
                             cur_freq_max,
                             util_tracking_sugg_freq
                         );
-                        cur_fas_freq_max
+                        anchor
                             .saturating_add(cluster_control)
                             .min(util_tracking_sugg_freq)
                             .clamp(0, self.max_freq)
