@@ -56,6 +56,35 @@ impl UsageTracker {
     }
 }
 
+/// 单线程 schedstat 的一次差分快照。
+///
+/// `exec_delta_ns`：采样窗口内该线程在 CPU 上执行的时间。
+/// `delay_delta_ns`：采样窗口内该线程在 runqueue 里等 CPU 的时间。
+/// `window_ns`：两次采样的时间差。
+///
+/// 一个线程在同一时刻只能处于三种状态之一：在 CPU 上跑、在 runqueue 里等、
+/// 睡眠/阻塞。所以 `exec + delay <= window`，差值就是“看不见的等待”
+/// （锁等待、IO 等待、GPU fence 等待）。
+#[derive(Debug, Clone, Copy)]
+pub struct SchedstatSnapshot {
+    pub tid: i32,
+    pub exec_delta_ns: u64,
+    pub delay_delta_ns: u64,
+    pub window_ns: u64,
+}
+
+impl SchedstatSnapshot {
+    /// 看不见的等待占采样窗口的比例（0.0 ~ 1.0）。
+    pub fn unseen_ratio(&self) -> f64 {
+        if self.window_ns == 0 {
+            return 0.0;
+        }
+        let covered = self.exec_delta_ns.saturating_add(self.delay_delta_ns);
+        let ratio = covered as f64 / self.window_ns as f64;
+        (1.0 - ratio).clamp(0.0, 1.0)
+    }
+}
+
 #[derive(Debug)]
 pub struct ProcessMonitor {
     current_pid: Option<i32>,
@@ -63,6 +92,8 @@ pub struct ProcessMonitor {
     top_trackers: HashMap<i32, UsageTracker>,
     last_full_update: Instant,
     last_update: Instant,
+    /// 上一次 schedstat 快照：(tid, exec_ns, delay_ns, 采样时刻)
+    last_schedstat: Option<(i32, u64, u64, Instant)>,
 }
 
 impl ProcessMonitor {
@@ -73,6 +104,7 @@ impl ProcessMonitor {
             top_trackers: HashMap::new(),
             last_full_update: Instant::now(),
             last_update: Instant::now(),
+            last_schedstat: None,
         }
     }
 
@@ -83,6 +115,7 @@ impl ProcessMonitor {
             self.top_trackers.clear();
             self.last_full_update = Instant::now();
             self.last_update = Instant::now();
+            self.last_schedstat = None;
         }
     }
 
@@ -163,6 +196,59 @@ impl ProcessMonitor {
             .iter()
             .map(|(&tid, tracker)| (tid, tracker.current_usage))
             .collect()
+    }
+
+    /// 对“当前 usage 最高的 top 线程”做一次 schedstat 差分。
+    ///
+    /// 返回 `None` 的情况：
+    /// - 没有游戏 pid
+    /// - top_trackers 为空
+    /// - 首次采样（没有上一次的值可比）
+    /// - top 线程切换了（tid 变了，差分无意义）
+    /// - schedstat 读取失败
+    ///
+    /// 返回值里的 `unseen_ratio()` 就是“这个线程在采样窗口内，
+    /// 有多少比例的时间既不在 CPU 上跑、也不在 runqueue 里等”。
+    /// 这部分时间对应锁等待、IO 等待、GPU fence 等待。
+    pub fn schedstat_delta(&mut self) -> Option<SchedstatSnapshot> {
+        let pid = self.current_pid?;
+        let tid = self
+            .top_trackers
+            .iter()
+            .max_by(|a, b| {
+                a.1.current_usage
+                    .partial_cmp(&b.1.current_usage)
+                    .unwrap_or(cmp::Ordering::Equal)
+            })
+            .map(|(tid, _)| *tid)?;
+
+        let path = format!("/proc/{pid}/task/{tid}/schedstat");
+        let content = fs::read_to_string(&path).ok()?;
+        let mut parts = content.split_whitespace();
+        let exec_ns = parts.next()?.parse::<u64>().ok()?;
+        let delay_ns = parts.next()?.parse::<u64>().ok()?;
+
+        let now = Instant::now();
+        let result = match self.last_schedstat {
+            Some((last_tid, last_exec, last_delay, last_time)) if last_tid == tid => {
+                let window_ns = now.duration_since(last_time).as_nanos() as u64;
+                if window_ns == 0 {
+                    None
+                } else {
+                    Some(SchedstatSnapshot {
+                        tid,
+                        exec_delta_ns: exec_ns.saturating_sub(last_exec),
+                        delay_delta_ns: delay_ns.saturating_sub(last_delay),
+                        window_ns,
+                    })
+                }
+            }
+            // 首次采样，或 top 线程切换了，不产生差分
+            _ => None,
+        };
+
+        self.last_schedstat = Some((tid, exec_ns, delay_ns, now));
+        result
     }
 }
 
