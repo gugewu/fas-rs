@@ -211,6 +211,20 @@ impl Controller {
     }
 
     pub fn fas_update_freq(&mut self, control: isize, is_janked: bool) {
+        // 诊断：单线程 schedstat 差分，打“看不见的等待”占比。
+        // 只打日志，不影响控制逻辑。
+        #[cfg(debug_assertions)]
+        if let Some(snapshot) = self.process_monitor.schedstat_delta() {
+            debug!(
+                "schedstat: tid={} exec={:.2}ms delay={:.2}ms window={:.2}ms unseen={:.1}%",
+                snapshot.tid,
+                snapshot.exec_delta_ns as f64 / 1e6,
+                snapshot.delay_delta_ns as f64 / 1e6,
+                snapshot.window_ns as f64 / 1e6,
+                snapshot.unseen_ratio() * 100.0,
+            );
+        }
+
         #[cfg(debug_assertions)]
         debug!("change freq: {control}");
 
@@ -370,9 +384,6 @@ impl Controller {
         control: isize,
         is_janked: bool,
     ) -> HashMap<i32, isize> {
-        // 注意：不再使用全局 `cur_fas_freq_max` 作为锚点。
-        // 每个 policy 从自己的 `cur_fas_freq` 出发，避免高权重 policy
-        // 把其他 policy 的频率一起往上拉，形成正反馈导致频率顶满。
         let cur_freq_max = self
             .cpu_infos
             .iter()
@@ -399,7 +410,6 @@ impl Controller {
                     .copied()
                     .unwrap_or(control);
 
-                // 每个 policy 用自己的当前频率作为起点
                 let anchor = cpu.cur_fas_freq;
 
                 (
